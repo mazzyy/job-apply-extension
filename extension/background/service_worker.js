@@ -1,6 +1,4 @@
-// Background service worker: holds API base URL and proxies requests so content
-// scripts don't fight CORS. Also opens the side panel when the toolbar icon is clicked.
-
+// Background service worker.
 const DEFAULT_API_BASE = "http://localhost:8000";
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -9,11 +7,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 
 chrome.action.onClicked.addListener(async (tab) => {
-  try {
-    await chrome.sidePanel.open({ tabId: tab.id });
-  } catch (e) {
-    console.warn("side panel open failed", e);
-  }
+  try { await chrome.sidePanel.open({ tabId: tab.id }); } catch (e) { console.warn(e); }
 });
 
 async function getApiBase() {
@@ -40,32 +34,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg.type === "API_GET") {
         sendResponse({ ok: true, data: await apiFetch(msg.path) });
       } else if (msg.type === "API_POST") {
-        sendResponse({
-          ok: true,
-          data: await apiFetch(msg.path, { method: "POST", body: JSON.stringify(msg.body || {}) }),
-        });
+        sendResponse({ ok: true, data: await apiFetch(msg.path, { method: "POST", body: JSON.stringify(msg.body || {}) }) });
       } else if (msg.type === "API_PATCH") {
-        sendResponse({
-          ok: true,
-          data: await apiFetch(msg.path, { method: "PATCH", body: JSON.stringify(msg.body || {}) }),
-        });
+        sendResponse({ ok: true, data: await apiFetch(msg.path, { method: "PATCH", body: JSON.stringify(msg.body || {}) }) });
       } else if (msg.type === "ANALYZE_JOB") {
         const data = await apiFetch("/analyze/", {
           method: "POST",
           body: JSON.stringify(msg.payload),
         });
-        // Forward to side panel listeners
+        // Stash so apply_watcher can mark the right row when the user clicks Apply
+        if (data.application_id) {
+          try {
+            await chrome.storage.session.set({
+              lastApplicationId: data.application_id,
+              lastApplicationUrl: msg.payload?.url || "",
+              lastApplicationAt: Date.now(),
+            });
+          } catch (e) { /* session storage may be unavailable */ }
+        }
         chrome.runtime.sendMessage({ type: "ANALYSIS_RESULT", data });
         sendResponse({ ok: true, data });
       } else if (msg.type === "OPEN_PANEL") {
         try { await chrome.sidePanel.open({ tabId: sender.tab?.id }); } catch {}
         sendResponse({ ok: true });
       } else {
-        sendResponse({ ok: false, error: "Unknown message type" });
+        sendResponse({ ok: false, error: "Unknown message type: " + msg.type });
       }
     } catch (e) {
       sendResponse({ ok: false, error: e.message });
     }
   })();
-  return true; // async sendResponse
+  return true;
 });

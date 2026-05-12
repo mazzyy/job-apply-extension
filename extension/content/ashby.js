@@ -1,16 +1,16 @@
 (function () {
-  if (window.__jaaLeverLoaded) return;
-  window.__jaaLeverLoaded = true;
+  if (window.__jaaAshbyLoaded) return;
+  window.__jaaAshbyLoaded = true;
 
   function $(s,r=document){return r.querySelector(s)}
   function txt(el){return (el?.innerText||"").trim()}
 
   function extractJob() {
-    const title = txt($(".posting-headline h2") || $("h2") || $("h1"));
-    const company = (location.hostname.split(".")[0] || "").replace(/^www$/, "");
-    const desc = txt($(".posting-page") || $(".content-wrapper") || $("main") || document.body);
+    const title = txt($("h1") || $(".ashby-job-posting-heading"));
+    const company = (location.hostname.split(".")[0] || "");
+    const desc = txt($("._descriptionText_ud4nd_201") || $("main") || document.body);
     if (!title || !desc || desc.length < 200) return null;
-    return { job_title:title, company, location:"", job_description:desc, url:location.href, source:"lever" };
+    return { job_title:title, company, location:"", job_description:desc, url:location.href, source:"ashby" };
   }
 
   function injectFab() {
@@ -21,19 +21,13 @@
     btn.innerHTML = `<span class="jaa-dot"></span> Analyze & autofill`;
     btn.addEventListener("click", async () => {
       btn.disabled = true;
-      const original = btn.innerHTML;
-      btn.innerHTML = `<span class="jaa-dot"></span> Working…`;
       const job = extractJob();
       if (job) chrome.runtime.sendMessage({ type: "ANALYZE_JOB", payload: job }).catch(()=>{});
       if (window.JAA_Autofill) {
         const r = await window.JAA_Autofill.fillAll();
-        if (r.error) btn.innerHTML = `<span class="jaa-dot"></span> ${r.error}`;
-        else btn.innerHTML = `<span class="jaa-dot"></span> Filled ${r.filled}/${r.total}`;
-      } else {
-        btn.innerHTML = original;
+        btn.innerHTML = `<span class="jaa-dot"></span> Filled ${r.filled||0}/${r.total||0}`;
       }
       btn.disabled = false;
-      setTimeout(() => { if (btn.isConnected) btn.innerHTML = original; }, 6000);
     });
     document.body.appendChild(btn);
   }

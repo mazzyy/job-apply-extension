@@ -1,39 +1,63 @@
 /*
- * Shared autofill engine — included by Greenhouse and Lever content scripts.
- * Maps common label keywords to profile fields and fills them.
+ * Universal autofill engine.
+ * Now exposed as window.JAA_Autofill AND callable via chrome.runtime message.
+ * Handles:
+ *   - Greenhouse, Lever, Ashby, Workday, and unknown career sites
+ *   - iframe-embedded Greenhouse forms (#grnhse_iframe, embedded boards)
+ *   - React/Vue controlled inputs (uses native setter)
+ *   - Label discovery via 6 strategies
  */
-window.JAA_Autofill = (function () {
+(function () {
+  if (window.__jaaAutofillLoaded) return;
+  window.__jaaAutofillLoaded = true;
+
   const FIELD_MAP = [
-    { keys: ["first name", "given name"], src: "first_name" },
-    { keys: ["last name", "family name", "surname"], src: "last_name" },
+    { keys: ["first name", "given name", "vorname"], src: "first_name" },
+    { keys: ["last name", "family name", "surname", "nachname"], src: "last_name" },
     { keys: ["full name", "your name", "name"], src: "full_name" },
-    { keys: ["email"], src: "email" },
-    { keys: ["phone", "mobile", "telephone"], src: "phone" },
-    { keys: ["city"], src: "city" },
-    { keys: ["country"], src: "country" },
-    { keys: ["linkedin", "linked in"], src: "linkedin_url" },
+    { keys: ["email", "e-mail"], src: "email" },
+    { keys: ["phone", "mobile", "telephone", "telefon"], src: "phone" },
+    { keys: ["city", "stadt"], src: "city" },
+    { keys: ["country", "land"], src: "country" },
+    { keys: ["linkedin"], src: "linkedin_url" },
     { keys: ["github"], src: "github_url" },
-    { keys: ["portfolio", "website", "personal site"], src: "portfolio_url" },
-    { keys: ["current company", "company name"], src: "current_company" },
-    { keys: ["current title", "current position", "job title"], src: "current_title" },
-    { keys: ["years of experience", "years experience"], src: "years_experience" },
-    { keys: ["work authorization", "right to work", "authorized to work"], src: "work_authorization" },
-    { keys: ["salary expectation", "expected salary", "compensation"], src: "salary_expectation" },
-    { keys: ["notice period"], src: "notice_period" },
+    { keys: ["portfolio", "website", "personal site", "homepage"], src: "portfolio_url" },
+    { keys: ["current company", "company name", "employer"], src: "current_company" },
+    { keys: ["current title", "current position", "job title", "current role"], src: "current_title" },
+    { keys: ["years of experience", "years experience", "berufserfahrung"], src: "years_experience" },
+    { keys: ["work authorization", "right to work", "authorized to work", "visa"], src: "work_authorization" },
+    { keys: ["salary expectation", "expected salary", "compensation", "gehaltsvorstellung"], src: "salary_expectation" },
+    { keys: ["notice period", "kündigungsfrist"], src: "notice_period" },
   ];
 
   function labelTextFor(input) {
-    // Try multiple strategies to find the visible label for an input.
+    // 1. aria-labelledby
+    const labelledBy = input.getAttribute("aria-labelledby");
+    if (labelledBy) {
+      const el = document.getElementById(labelledBy);
+      if (el) return el.innerText.trim();
+    }
+    // 2. aria-label
+    if (input.getAttribute("aria-label")) return input.getAttribute("aria-label").trim();
+    // 3. <label for=id>
     if (input.id) {
       const lab = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
       if (lab) return lab.innerText.trim();
     }
-    const wrap = input.closest("label, .field, .form-group, .application--question, .input-block, div");
+    // 4. Closest label ancestor
+    const closestLab = input.closest("label");
+    if (closestLab) return closestLab.innerText.trim();
+    // 5. Wrapping container's label/legend
+    const wrap = input.closest(
+      ".field, .form-group, .application--question, .input-block, " +
+      ".question, .field--group, .form-field, .input-wrapper, div, fieldset"
+    );
     if (wrap) {
-      const lab = wrap.querySelector("label, legend, .text, .application-label");
-      if (lab) return lab.innerText.trim();
+      const lab = wrap.querySelector("label, legend, .text, .application-label, [class*='label']");
+      if (lab && lab !== input) return lab.innerText.trim();
     }
-    return input.placeholder || input.name || "";
+    // 6. Placeholder / name attribute as last resort
+    return input.placeholder || input.name || input.id || "";
   }
 
   function matchField(label) {
@@ -45,50 +69,82 @@ window.JAA_Autofill = (function () {
   }
 
   function setValue(el, value) {
-    if (value === undefined || value === null || value === "") return;
+    if (value === undefined || value === null || value === "") return false;
     const v = String(value);
     if (el.tagName === "SELECT") {
       const opt = Array.from(el.options).find(o =>
         o.text.toLowerCase().includes(v.toLowerCase()) ||
-        o.value.toLowerCase().includes(v.toLowerCase())
+        (o.value || "").toLowerCase().includes(v.toLowerCase())
       );
-      if (opt) { el.value = opt.value; el.dispatchEvent(new Event("change", { bubbles: true })); }
-    } else {
-      // React/Vue need the native setter to fire correctly
-      const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-      setter ? setter.call(el, v) : (el.value = v);
-      el.dispatchEvent(new Event("input", { bubbles: true }));
+      if (!opt) return false;
+      el.value = opt.value;
       el.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
     }
+    // Use native setter so React/Vue see the update
+    const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) setter.call(el, v); else el.value = v;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new Event("blur", { bubbles: true }));
+    return true;
   }
 
   async function getProfile() {
-    const resp = await chrome.runtime.sendMessage({ type: "API_GET", path: "/profile/" });
-    return resp?.ok ? resp.data : {};
+    try {
+      const resp = await chrome.runtime.sendMessage({ type: "API_GET", path: "/profile/" });
+      return resp?.ok ? (resp.data || {}) : {};
+    } catch { return {}; }
+  }
+
+  function findInputs(root) {
+    const sel = 'input[type="text"], input[type="email"], input[type="tel"], input[type="url"], ' +
+                'input[type="search"], input:not([type]), textarea, select';
+    const list = Array.from(root.querySelectorAll(sel));
+    // Also descend into same-origin iframes (Greenhouse embed)
+    root.querySelectorAll("iframe").forEach(f => {
+      try {
+        const doc = f.contentDocument;
+        if (doc) list.push(...doc.querySelectorAll(sel));
+      } catch { /* cross-origin, skip */ }
+    });
+    return list;
   }
 
   async function fillAll() {
     const profile = await getProfile();
     if (!profile || Object.keys(profile).length === 0) {
-      alert("No profile yet — upload a CV in the dashboard first.");
-      return { filled: 0 };
+      return { filled: 0, error: "No profile yet — upload a CV in the dashboard first." };
     }
-    const inputs = Array.from(document.querySelectorAll(
-      'input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input:not([type]), textarea, select'
-    ));
-    let filled = 0;
+    const inputs = findInputs(document);
+    let filled = 0, skipped = 0;
+    const debug = [];
     for (const el of inputs) {
       if (el.disabled || el.readOnly) continue;
+      if (el.type === "hidden") continue;
+      if (el.value && el.value.length > 1) { skipped++; continue; }
       const label = labelTextFor(el);
       const key = matchField(label);
-      if (!key) continue;
-      if (el.value && el.value.length > 1) continue;     // don't clobber existing answers
+      if (!key) { debug.push({ label, key: null }); continue; }
       const val = profile[key];
-      if (val) { setValue(el, val); filled++; }
+      if (!val) continue;
+      if (setValue(el, val)) {
+        filled++;
+        debug.push({ label, key, filled: true });
+      }
     }
-    return { filled };
+    console.log("[JAA] autofill:", { filled, skipped, inputs: inputs.length, debug });
+    return { filled, skipped, total: inputs.length };
   }
 
-  return { fillAll, getProfile };
+  window.JAA_Autofill = { fillAll, getProfile };
+
+  // Allow background to invoke autofill via executeScript message
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type === "RUN_AUTOFILL") {
+      fillAll().then(r => sendResponse({ ok: true, ...r })).catch(e => sendResponse({ ok: false, error: e.message }));
+      return true;
+    }
+  });
 })();

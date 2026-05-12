@@ -41,9 +41,20 @@ $all(".sidebar a").forEach(a => a.addEventListener("click", e => {
 async function checkApi(){
   try {
     const h = await API.get("/health");
-    $("#api-status").textContent = `API connected · model ${h.model}`;
+    $("#api-status").textContent = `API connected`;
+    const verified = h.model_verified;
+    const dot = verified ? "●" : "○";
+    const color = verified ? "#22c55e" : "#f59e0b";
+    $("#model-status").innerHTML = `<span style="color:${color}">${dot}</span> Model: <b>${esc(h.model)}</b>${verified ? "" : " (unverified)"}`;
+    const v = $("#verify-info");
+    if (v) {
+      v.innerHTML = verified
+        ? `<span style="color:#16a34a">✓ ${esc(h.model)} verified at ${esc(h.endpoint)}</span><br/>Reply: <code>${esc(h.model_reply || "")}</code>`
+        : `<span style="color:#b91c1c">✗ ${esc(h.model_error || "not verified")}</span>`;
+    }
   } catch (e) {
     $("#api-status").textContent = "API unreachable — is the backend running?";
+    const m = $("#model-status"); if (m) m.textContent = "Model: unreachable";
   }
 }
 
@@ -222,3 +233,18 @@ $("#save-api").addEventListener("click", () => {
   await checkApi();
   await Promise.all([loadStats(), loadApps(), loadCvs(), loadProfile()]);
 })();
+
+$("#reverify")?.addEventListener("click", async () => {
+  const v = $("#verify-info"); if (v) v.textContent = "Pinging deployment…";
+  try {
+    const r = await API.post("/verify-model", {});
+    if (r.ok) {
+      if (v) v.innerHTML = `<span style="color:#16a34a">✓ ${esc(r.deployment)} verified.</span> Reply: <code>${esc(r.reply || "")}</code>`;
+    } else {
+      if (v) v.innerHTML = `<span style="color:#b91c1c">✗ ${esc(r.error || "failed")}</span>`;
+    }
+    await checkApi();
+  } catch (e) {
+    if (v) v.textContent = "Error: " + e.message;
+  }
+});

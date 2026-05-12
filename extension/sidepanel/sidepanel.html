@@ -1,34 +1,119 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<title>Job Apply Assistant</title>
-<link rel="stylesheet" href="sidepanel.css" />
+  <meta charset="utf-8" />
+  <title>Job Apply Assistant</title>
+  <link rel="stylesheet" href="sidepanel.css" />
 </head>
 <body>
-  <header>
-    <strong>Job Apply Assistant</strong>
-    <span id="cv-active" class="muted">—</span>
+  <!-- Top bar -->
+  <header class="topbar">
+    <div class="brand-logo">J</div>
+    <div>
+      <div class="brand-text">Job Apply Assistant</div>
+      <div class="brand-sub" id="brand-sub">Ready</div>
+    </div>
+    <div class="topbar-meta">
+      <span class="status-dot" id="status-dot" title="API status"></span>
+      <span class="cv-tag" id="cv-tag" title="Active CV">—</span>
+    </div>
   </header>
 
-  <section id="result" class="card">
-    <div class="muted">Open a job page on LinkedIn, Greenhouse or Lever and click <b>Analyze this job</b> to see your fit here.</div>
-  </section>
+  <div class="content">
+    <!-- Result area -->
+    <section class="card" id="result-card">
+      <div class="empty" id="empty-state">
+        <div class="empty-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="9" y1="13" x2="15" y2="13"/>
+            <line x1="9" y1="17" x2="13" y2="17"/>
+          </svg>
+        </div>
+        <div class="empty-title">No job analyzed yet</div>
+        <div class="empty-text">Open a job page on LinkedIn, Greenhouse, Lever, or any career site, then click <b>Analyze this page</b> below.</div>
+      </div>
+    </section>
 
-  <section class="card">
-    <h3>Quick actions</h3>
-    <button id="autofill">Autofill current page</button>
-    <button id="open-dash" class="secondary">Open dashboard</button>
-  </section>
+    <!-- Quick actions -->
+    <section class="card">
+      <div class="card-header">
+        <span class="card-title">Quick actions</span>
+      </div>
+      <div class="btn-grid">
+        <button class="btn primary full" id="analyze-this">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 21l-4.35-4.35"/><circle cx="11" cy="11" r="7"/></svg>
+          Analyze this page
+        </button>
+        <button class="btn secondary" id="autofill">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4z"/></svg>
+          Autofill form
+        </button>
+        <button class="btn secondary" id="cover-letter-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          Cover letter
+        </button>
+        <button class="btn ghost full" id="open-dash">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+          Open dashboard
+        </button>
+      </div>
+      <div class="status-line" id="action-status"></div>
+    </section>
 
-  <section class="card">
-    <h3>Settings</h3>
-    <label>API base URL
-      <input id="api-base" type="url" placeholder="http://localhost:8000" />
-    </label>
-    <button id="save-settings">Save</button>
-    <div id="settings-status" class="muted"></div>
-  </section>
+    <!-- Cover letter card (hidden until drafted) -->
+    <section class="card hidden" id="letter-card">
+      <div class="card-header">
+        <span class="card-title">Cover letter draft</span>
+        <button class="btn ghost small" id="close-letter" title="Hide">✕</button>
+      </div>
+      <textarea class="letter" id="letter-text" placeholder="Your draft will appear here…"></textarea>
+      <div class="btn-grid" style="margin-top: 10px;">
+        <button class="btn secondary" id="copy-letter">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          Copy
+        </button>
+        <button class="btn secondary" id="regen-letter">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></svg>
+          Regenerate
+        </button>
+      </div>
+      <div class="status-line" id="letter-status"></div>
+    </section>
+
+    <!-- Settings (collapsed) -->
+    <section class="card">
+      <details class="settings">
+        <summary>
+          <span class="card-title" style="margin:0;">Settings</span>
+          <span class="chevron">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </span>
+        </summary>
+        <div class="settings-body">
+          <div class="field">
+            <label for="api-base">API base URL</label>
+            <input class="input" id="api-base" type="url" placeholder="http://localhost:8000" />
+          </div>
+
+          <label class="toggle">
+            <input type="checkbox" id="auto-cv" checked />
+            <span class="switch"></span>
+            <span class="label">
+              <span class="label-title">Auto-pick best CV</span>
+              <span class="label-sub">Score each CV against the JD and use the strongest match.</span>
+            </span>
+          </label>
+
+          <button class="btn secondary" id="save-settings">Save settings</button>
+          <div class="status-line" id="settings-status"></div>
+        </div>
+      </details>
+    </section>
+  </div>
 
   <script src="sidepanel.js"></script>
 </body>
