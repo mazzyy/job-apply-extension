@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Job Apply Assistant</title>
+<link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <header>
+    <strong>Job Apply Assistant</strong>
+    <span id="cv-active" class="muted">—</span>
+  </header>
+
+  <section id="result" class="card">
+    <div class="muted">Open a job page on LinkedIn, Greenhouse or Lever and click <b>Analyze this job</b> to see your fit here.</div>
+  </section>
+
+  <section class="card">
+    <h3>Quick actions</h3>
+    <button id="autofill">Autofill current page</button>
+    <button id="open-dash" class="secondary">Open dashboard</button>
+  </section>
+
+  <section class="card">
+    <h3>Settings</h3>
+    <label>API base URL
+      <input id="api-base" type="url" placeholder="http://localhost:8000" />
+    </label>
+    <button id="save-settings">Save</button>
+    <div id="settings-status" class="muted"></div>
+  </section>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

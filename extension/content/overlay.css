@@ -1,0 +1,44 @@
+.jaa-fab {
+  position: fixed; right: 24px; bottom: 24px; z-index: 2147483647;
+  background: linear-gradient(135deg,#4f46e5,#7c3aed); color:#fff;
+  border: none; border-radius: 999px; padding: 12px 18px;
+  font: 600 14px/1 -apple-system, system-ui, sans-serif;
+  box-shadow: 0 8px 20px rgba(79,70,229,.35);
+  cursor: pointer; display: flex; align-items: center; gap: 8px;
+}
+.jaa-fab:hover { transform: translateY(-1px); }
+.jaa-fab .jaa-dot { width:8px; height:8px; border-radius:50%; background:#22c55e; }
+.jaa-card {
+  position: fixed; right: 24px; bottom: 80px; width: 360px; max-height: 70vh;
+  overflow: auto; z-index: 2147483647;
+  background: #fff; color:#111; border-radius: 14px;
+  box-shadow: 0 16px 50px rgba(0,0,0,.18);
+  border: 1px solid #e5e7eb;
+  font: 14px/1.45 -apple-system, system-ui, sans-serif;
+}
+.jaa-card header {
+  display:flex; justify-content:space-between; align-items:center;
+  padding:12px 14px; background:#f8fafc; border-bottom:1px solid #e5e7eb;
+  border-radius: 14px 14px 0 0; font-weight:600;
+}
+.jaa-card .jaa-x { background:none; border:none; cursor:pointer; font-size:18px; color:#6b7280; }
+.jaa-card .jaa-body { padding:12px 14px; }
+.jaa-score { font-size: 34px; font-weight: 700; }
+.jaa-score-row { display:flex; gap:14px; align-items:center; margin-bottom:8px; }
+.jaa-pill { display:inline-block; padding:3px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+.jaa-pill.good { background:#dcfce7; color:#166534; }
+.jaa-pill.warn { background:#fef3c7; color:#92400e; }
+.jaa-pill.bad  { background:#fee2e2; color:#991b1b; }
+.jaa-pill.lang { background:#dbeafe; color:#1e40af; margin-right:6px; }
+.jaa-section { margin-top: 10px; }
+.jaa-section h4 { margin:6px 0 4px; font-size: 13px; color:#374151; }
+.jaa-list { margin:0; padding-left: 18px; }
+.jaa-list li { margin: 3px 0; }
+.jaa-loading { padding: 20px; text-align:center; color:#6b7280; }
+.jaa-error { padding: 12px; color:#991b1b; background:#fef2f2; border-radius: 8px; }
+.jaa-actions { display:flex; gap:8px; margin-top: 10px; }
+.jaa-btn {
+  background:#111827; color:#fff; border:none; padding:8px 12px;
+  border-radius:8px; font-weight:600; cursor:pointer; font-size:12px;
+}
+.jaa-btn.secondary { background:#e5e7eb; color:#111; }

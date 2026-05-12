@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Job Apply Assistant — Dashboard</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<aside class="sidebar">
+  <div class="brand">
+    <span class="logo">J</span>
+    <span>Job Apply Assistant</span>
+  </div>
+  <nav>
+    <a href="#overview" data-tab="overview" class="active">Overview</a>
+    <a href="#applications" data-tab="applications">Applications</a>
+    <a href="#cvs" data-tab="cvs">My CVs</a>
+    <a href="#profile" data-tab="profile">Profile (autofill)</a>
+    <a href="#settings" data-tab="settings">Settings</a>
+  </nav>
+  <div class="api-status" id="api-status">Checking API…</div>
+</aside>
+
+<main>
+  <section id="tab-overview" class="tab active">
+    <h1>Overview</h1>
+    <div class="grid stats">
+      <div class="stat"><span id="stat-total">0</span><label>Roles analyzed</label></div>
+      <div class="stat"><span id="stat-applied">0</span><label>Applied</label></div>
+      <div class="stat"><span id="stat-interview">0</span><label>Interviewing</label></div>
+      <div class="stat"><span id="stat-offer">0</span><label>Offers</label></div>
+      <div class="stat"><span id="stat-avg-fit">0</span><label>Avg fit score</label></div>
+    </div>
+
+    <div class="grid two">
+      <div class="card">
+        <h3>Fit-score distribution</h3>
+        <div id="fit-buckets" class="buckets"></div>
+      </div>
+      <div class="card">
+        <h3>Where you're applying</h3>
+        <div id="by-source" class="buckets"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Recent activity</h3>
+      <div id="recent"></div>
+    </div>
+  </section>
+
+  <section id="tab-applications" class="tab">
+    <h1>Applications</h1>
+    <div class="filters">
+      <input id="filter-search" placeholder="Search role or company…" />
+      <select id="filter-status">
+        <option value="">All statuses</option>
+        <option value="analyzed">Analyzed</option>
+        <option value="applied">Applied</option>
+        <option value="interview">Interviewing</option>
+        <option value="offer">Offer</option>
+        <option value="rejected">Rejected</option>
+      </select>
+    </div>
+    <table class="apps">
+      <thead>
+        <tr>
+          <th>Role</th><th>Company</th><th>Source</th><th>Fit</th>
+          <th>Language</th><th>Status</th><th>Date</th>
+        </tr>
+      </thead>
+      <tbody id="apps-body"></tbody>
+    </table>
+  </section>
+
+  <section id="tab-cvs" class="tab">
+    <h1>My CVs</h1>
+    <form id="cv-form" class="card">
+      <h3>Upload a CV</h3>
+      <input type="text" name="label" placeholder="Label, e.g. 'Backend Engineer CV'" required />
+      <input type="text" name="tag" placeholder="Tag (optional), e.g. backend, ml, management" />
+      <input type="file" name="file" accept=".pdf,.docx,.doc,.txt" required />
+      <label class="row"><input type="checkbox" name="set_active" checked /> Make this my active CV</label>
+      <button type="submit">Upload</button>
+      <div id="cv-status" class="muted"></div>
+    </form>
+    <div id="cv-list"></div>
+  </section>
+
+  <section id="tab-profile" class="tab">
+    <h1>Profile (used for autofill)</h1>
+    <form id="profile-form" class="card grid two-form">
+      <label>Full name <input name="full_name" /></label>
+      <label>Email <input name="email" type="email" /></label>
+      <label>First name <input name="first_name" /></label>
+      <label>Last name <input name="last_name" /></label>
+      <label>Phone <input name="phone" /></label>
+      <label>City <input name="city" /></label>
+      <label>Country <input name="country" /></label>
+      <label>LinkedIn URL <input name="linkedin_url" /></label>
+      <label>GitHub URL <input name="github_url" /></label>
+      <label>Portfolio URL <input name="portfolio_url" /></label>
+      <label>Current company <input name="current_company" /></label>
+      <label>Current title <input name="current_title" /></label>
+      <label>Years experience <input name="years_experience" type="number" /></label>
+      <label>Work authorization <input name="work_authorization" placeholder="e.g. EU citizen / needs sponsorship" /></label>
+      <label>Salary expectation <input name="salary_expectation" /></label>
+      <label>Notice period <input name="notice_period" /></label>
+      <button type="submit">Save profile</button>
+      <div id="profile-status" class="muted"></div>
+    </form>
+  </section>
+
+  <section id="tab-settings" class="tab">
+    <h1>Settings</h1>
+    <div class="card">
+      <label>API base URL
+        <input id="api-base" type="url" placeholder="http://localhost:8000" />
+      </label>
+      <button id="save-api">Save</button>
+      <p class="muted">The extension and dashboard talk to a FastAPI backend running on your machine. Default: http://localhost:8000.</p>
+    </div>
+  </section>
+</main>
+
+<dialog id="app-detail">
+  <form method="dialog" id="app-detail-body"></form>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

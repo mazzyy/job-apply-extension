@@ -1,0 +1,69 @@
+* { box-sizing: border-box; }
+body { margin:0; font: 14px/1.5 -apple-system, system-ui, "Segoe UI", sans-serif;
+       background:#f5f6fa; color:#111; display:flex; min-height:100vh; }
+.sidebar { width:240px; background:#0f172a; color:#cbd5e1; padding:20px 14px;
+           display:flex; flex-direction:column; }
+.brand { display:flex; gap:10px; align-items:center; font-weight:700; color:#fff; margin-bottom: 22px; }
+.logo { width:30px; height:30px; border-radius:8px; background:linear-gradient(135deg,#4f46e5,#7c3aed); color:#fff; display:grid; place-items:center; font-weight:800; }
+.sidebar nav { display:flex; flex-direction:column; gap:2px; }
+.sidebar a { color:#cbd5e1; text-decoration:none; padding:8px 10px; border-radius:7px; font-size:13px; }
+.sidebar a:hover, .sidebar a.active { background:#1e293b; color:#fff; }
+.api-status { margin-top:auto; font-size:11px; color:#64748b; padding-top: 14px; border-top:1px solid #1e293b; }
+
+main { flex:1; padding: 24px 32px; }
+h1 { font-size:22px; margin: 0 0 16px; }
+h3 { margin: 0 0 10px; font-size: 14px; color:#374151; }
+.tab { display:none; }
+.tab.active { display:block; }
+
+.grid { display:grid; gap:16px; }
+.grid.stats { grid-template-columns: repeat(5, 1fr); margin-bottom: 20px; }
+.grid.two { grid-template-columns: 1fr 1fr; margin-bottom: 16px; }
+.grid.two-form { grid-template-columns: 1fr 1fr; gap:10px 16px; }
+.grid.two-form button, .grid.two-form > div { grid-column: 1 / -1; }
+
+.stat { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:14px;
+        display:flex; flex-direction:column; }
+.stat span { font-size:24px; font-weight:700; }
+.stat label { color:#6b7280; font-size:12px; }
+
+.card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:14px; }
+.muted { color:#6b7280; font-size:12px; margin-top:8px; }
+
+.buckets { display:flex; gap:6px; align-items:flex-end; height: 120px; padding: 4px 2px;}
+.bucket { flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; }
+.bar { width:100%; background:linear-gradient(180deg,#7c3aed,#4f46e5); border-radius:6px 6px 0 0; }
+.bucket label { font-size: 11px; color:#6b7280; margin-top:4px; }
+.bucket span { font-size: 11px; color:#374151; font-weight:600; }
+
+input, select { padding:8px 10px; border:1px solid #d1d5db; border-radius:7px; font-size:13px; width:100%; }
+label { font-size:12px; color:#374151; display:block; }
+label.row { display:flex; align-items:center; gap:6px; }
+form input + input, form input + label { margin-top: 8px; }
+button { background:#4f46e5; color:#fff; border:none; padding:8px 14px; border-radius:7px;
+         font-weight:600; cursor:pointer; font-size:13px; margin-top: 10px; }
+button.secondary { background:#e5e7eb; color:#111; }
+button.danger { background:#fee2e2; color:#991b1b; }
+
+table.apps { width:100%; background:#fff; border:1px solid #e5e7eb; border-radius:10px;
+             border-collapse: separate; border-spacing: 0; overflow:hidden; }
+table.apps th, table.apps td { padding:10px 12px; text-align:left; font-size:13px; border-bottom:1px solid #f1f5f9; }
+table.apps th { background:#f8fafc; color:#475569; font-weight:600; font-size:12px; }
+table.apps tr:hover { background:#fafbff; cursor:pointer; }
+.fit-pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; }
+.fit-pill.good { background:#dcfce7; color:#166534 }
+.fit-pill.warn { background:#fef3c7; color:#92400e }
+.fit-pill.bad  { background:#fee2e2; color:#991b1b }
+.lang-tag { background:#dbeafe; color:#1e40af; padding:2px 6px; border-radius:999px; font-size:11px; }
+.filters { display:flex; gap:10px; margin-bottom:12px; }
+
+#cv-list { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:12px; margin-top:16px; }
+.cv-card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:14px; }
+.cv-card .label { font-weight:600; }
+.cv-card .tag { display:inline-block; background:#eef2ff; color:#3730a3; padding:2px 8px; border-radius:999px; font-size:11px; }
+.cv-card .preview { font-size:12px; color:#6b7280; margin-top:6px; max-height:80px; overflow:hidden; }
+.cv-card .active { color:#16a34a; font-size:11px; font-weight:700; }
+
+dialog { border:none; border-radius:12px; padding:0; max-width: 720px; width:90%; }
+dialog::backdrop { background: rgba(15,23,42,.55); }
+#app-detail-body { padding:20px; }
