@@ -1,70 +1,89 @@
 const $ = s => document.querySelector(s);
 let lastAnalysis = null;
-let lastJobPayload = null;
+let lastJobPayload = null;     // Extracted JD/title/company from the active tab
+let lastApplicationId = null;  // Either from analyze or from autofill log
 
 function esc(s){
   return (s ?? "").toString().replace(/[&<>"']/g, c =>
     ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])
   );
 }
-
 function fitTone(score){
   if (score >= 80) return { cls: "good", color: "#16a34a" };
   if (score >= 60) return { cls: "warn", color: "#d97706" };
   return { cls: "bad", color: "#dc2626" };
 }
-
 function setStatus(el, msg, kind){
   el.className = "status-line" + (kind ? " " + kind : "");
   el.innerHTML = msg || "";
 }
-
 function setLoadingStatus(el, msg){
   el.className = "status-line";
   el.innerHTML = `<span class="spinner"></span> ${esc(msg)}`;
 }
 
-/* ---------- Top bar status ---------- */
+/* ---------- Header status ---------- */
 async function refreshHeader(){
-  const dot = $("#status-dot");
-  const tag = $("#cv-tag");
-  const sub = $("#brand-sub");
+  const dot = $("#status-dot"); const tag = $("#cv-tag"); const sub = $("#brand-sub");
   try {
-    const health = await chrome.runtime.sendMessage({ type: "API_GET", path: "/health" });
-    if (!health?.ok) throw new Error("api offline");
-    const h = health.data;
-    const verified = h.model_verified;
-    dot.className = "status-dot " + (verified ? "live" : "warn");
-    dot.title = verified ? `${h.model} verified` : (h.model_error || "Unverified");
-    sub.textContent = verified ? `${h.model} · ready` : `${h.model} · unverified`;
+    const h = await chrome.runtime.sendMessage({ type: "API_GET", path: "/health" });
+    if (!h?.ok) throw new Error("api offline");
+    const d = h.data;
+    dot.className = "status-dot " + (d.model_verified ? "live" : "warn");
+    dot.title = d.model_verified ? `${d.model} verified` : (d.model_error || "Unverified");
+    sub.textContent = d.model_verified ? `${d.model} · ready` : `${d.model} · unverified`;
   } catch {
-    dot.className = "status-dot offline";
-    dot.title = "Backend offline";
+    dot.className = "status-dot offline"; dot.title = "Backend offline";
     sub.textContent = "Backend offline";
   }
   try {
     const cv = await chrome.runtime.sendMessage({ type: "API_GET", path: "/cvs/active" });
-    if (cv?.ok) tag.textContent = cv.data.label || "Active CV";
-    else tag.textContent = "No CV";
+    tag.textContent = cv?.ok ? (cv.data.label || "Active CV") : "No CV";
   } catch { tag.textContent = "—"; }
 }
 
-/* ---------- Render result ---------- */
+/* ---------- Extract job from active tab ---------- */
+async function extractCurrentJob(){
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return null;
+  try {
+    // Prefer the board-specific extractor injected by content scripts (linkedin/greenhouse/lever/ashby/generic)
+    const [{ result } = {}] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        if (window.__jaaExtractJob) {
+          const r = window.__jaaExtractJob();
+          if (r) return r;
+        }
+        // Fallback inline extraction
+        const txt = el => (el?.innerText || "").trim();
+        const title = txt(document.querySelector("h1, h2"));
+        const body = txt(document.querySelector("main") || document.querySelector("article") || document.body).slice(0, 12000);
+        const company = document.querySelector('meta[property="og:site_name"]')?.content
+          || location.hostname.replace(/^www\./, "").split(".")[0];
+        return { job_title: title, company, job_description: body, url: location.href, source: "manual" };
+      },
+    });
+    return result;
+  } catch (e) {
+    console.warn("extractCurrentJob failed", e);
+    return null;
+  }
+}
+
+/* ---------- Render ---------- */
 function renderResult(r){
   lastAnalysis = r;
+  if (r.application_id) lastApplicationId = r.application_id;
   const score = Math.round(r.fit_score || 0);
   const tone = fitTone(score);
   const lang = r.language || {};
   const langChips = (lang.requires_other_languages || []).length
     ? lang.requires_other_languages.map(l => `<span class="pill lang">${esc(l)} required</span>`).join("")
     : `<span class="pill good">English OK</span>`;
-
   const cvLabel = r.cv_used?.label || "—";
-  const cvStrategy = r.cv_selection?.strategy;
-  const cvBadge = cvStrategy === "auto"
-    ? `<span class="pill info" title="Auto-selected from your CV library">auto-picked</span>`
-    : cvStrategy === "explicit" ? `<span class="pill muted">manual</span>` : "";
-
+  const cvBadge = r.cv_selection?.strategy === "auto"
+    ? `<span class="pill info" title="Auto-selected from your CV library">auto-picked</span>` : "";
   const jdLen = (r.jd_length || 0).toLocaleString();
   const warning = r.jd_warning ? `
     <div class="warn-banner">
@@ -74,7 +93,6 @@ function renderResult(r){
       </svg>
       <div>${esc(r.jd_warning)}</div>
     </div>` : "";
-
   $("#result-card").innerHTML = `
     <div class="score-row">
       <div class="score-ring" style="--p:${score};--c:${tone.color}">
@@ -88,50 +106,34 @@ function renderResult(r){
         <div class="pills">${langChips} ${cvBadge}</div>
       </div>
     </div>
-
     <div class="jd-meta">
       <span>CV: <b>${esc(cvLabel)}</b></span>
       <span>·</span>
       <span>JD: <b>${jdLen}</b> chars</span>
     </div>
-
     ${warning}
-
     ${r.verdict ? `<div class="verdict">${esc(r.verdict)}</div>` : ""}
-
-    <div class="section strengths">
-      <div class="section-title"><span class="swatch"></span> Strengths</div>
-      <ul class="bullets">${(r.strengths||[]).map(s => `<li>${esc(s)}</li>`).join("") || "<li>—</li>"}</ul>
-    </div>
-
-    <div class="section gaps">
-      <div class="section-title"><span class="swatch"></span> Gaps</div>
-      <ul class="bullets">${(r.gaps||[]).map(s => `<li>${esc(s)}</li>`).join("") || "<li>—</li>"}</ul>
-    </div>
-
-    <div class="section recs">
-      <div class="section-title"><span class="swatch"></span> Recommendations</div>
-      <ul class="bullets">${(r.recommendations||[]).map(s => `<li>${esc(s)}</li>`).join("") || "<li>—</li>"}</ul>
-    </div>
-  `;
+    <div class="section strengths"><div class="section-title"><span class="swatch"></span> Strengths</div>
+      <ul class="bullets">${(r.strengths||[]).map(s => `<li>${esc(s)}</li>`).join("") || "<li>—</li>"}</ul></div>
+    <div class="section gaps"><div class="section-title"><span class="swatch"></span> Gaps</div>
+      <ul class="bullets">${(r.gaps||[]).map(s => `<li>${esc(s)}</li>`).join("") || "<li>—</li>"}</ul></div>
+    <div class="section recs"><div class="section-title"><span class="swatch"></span> Recommendations</div>
+      <ul class="bullets">${(r.recommendations||[]).map(s => `<li>${esc(s)}</li>`).join("") || "<li>—</li>"}</ul></div>`;
 }
-
-function renderLoading(){
+function renderLoading(msg){
   $("#result-card").innerHTML = `
     <div class="loading-state">
       <div class="spinner"></div>
       <div>
-        <div style="font-weight:600;color:var(--text);font-size:13px">Analyzing this role…</div>
+        <div style="font-weight:600;color:var(--text);font-size:13px">${esc(msg || "Analyzing this role…")}</div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Comparing your CV against the job description</div>
       </div>
     </div>`;
 }
-
 function renderError(msg){
   $("#result-card").innerHTML = `<div class="error-state">${esc(msg)}</div>`;
 }
 
-/* ---------- Background message listener ---------- */
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "ANALYSIS_RESULT") renderResult(msg.data);
 });
@@ -140,57 +142,39 @@ chrome.runtime.onMessage.addListener((msg) => {
 $("#analyze-this").addEventListener("click", async () => {
   const status = $("#action-status");
   setLoadingStatus(status, "Reading page…");
-  renderLoading();
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) { setStatus(status, "No active tab.", "err"); return; }
-  try {
-    const [{ result } = {}] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: () => {
-        const txt = el => (el?.innerText || "").trim();
-        const title = txt(document.querySelector("h1, h2"));
-        const body = txt(document.querySelector("main") || document.querySelector("article") || document.body).slice(0, 12000);
-        const company = document.querySelector('meta[property="og:site_name"]')?.content
-          || location.hostname.replace(/^www\./, "").split(".")[0];
-        return { job_title: title, company, job_description: body, url: location.href, source: "manual" };
-      },
-    });
-    const job = result;
-    if (!job || (job.job_description || "").length < 200) {
-      setStatus(status, "Couldn't find enough job text on this page. Scroll the JD into view first.", "err");
-      $("#result-card").innerHTML = `<div class="empty"><div class="empty-title">Page not ready</div><div class="empty-text">Make sure the job description is visible on screen, then try again.</div></div>`;
-      return;
-    }
-    lastJobPayload = job;
-    setLoadingStatus(status, `Analyzing ${job.job_title || "this role"}…`);
-    const { autoCv = true } = await chrome.storage.sync.get("autoCv");
-    const resp = await chrome.runtime.sendMessage({
-      type: "ANALYZE_JOB", payload: { ...job, auto_select_cv: autoCv },
-    });
-    if (!resp?.ok) {
-      renderError(resp?.error || "Analysis failed");
-      setStatus(status, resp?.error || "Failed", "err");
-      return;
-    }
-    renderResult(resp.data);
-    setStatus(status, "Analysis complete.", "ok");
-  } catch (e) {
-    setStatus(status, e.message, "err");
-    renderError(e.message);
+  renderLoading("Reading page…");
+  const job = await extractCurrentJob();
+  if (!job || (job.job_description || "").length < 200) {
+    setStatus(status, "Couldn't find enough job text on this page. Scroll the JD into view.", "err");
+    $("#result-card").innerHTML = `<div class="empty"><div class="empty-title">Page not ready</div><div class="empty-text">Make sure the job description is visible on screen, then try again.</div></div>`;
+    return;
   }
+  lastJobPayload = job;
+  setLoadingStatus(status, `Analyzing ${job.job_title || "this role"}…`);
+  renderLoading();
+  const { autoCv = true } = await chrome.storage.sync.get("autoCv");
+  const resp = await chrome.runtime.sendMessage({
+    type: "ANALYZE_JOB", payload: { ...job, auto_select_cv: autoCv },
+  });
+  if (!resp?.ok) { renderError(resp?.error || "Analysis failed"); setStatus(status, resp?.error || "Failed", "err"); return; }
+  renderResult(resp.data);
+  setStatus(status, "Analysis complete.", "ok");
 });
 
-/* ---------- Autofill ---------- */
+/* ---------- Autofill — also logs as applied ---------- */
 $("#autofill").addEventListener("click", async () => {
   const status = $("#action-status");
   setLoadingStatus(status, "Autofilling fields…");
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) { setStatus(status, "No active tab.", "err"); return; }
+
+  // Make sure the autofill engine is loaded in every frame
   try {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: true }, files: ["content/autofill.js"],
     });
   } catch (e) { setStatus(status, "Cannot autofill on this page (" + e.message + ")", "err"); return; }
+
   let filled = 0, seen = 0, error = null;
   try {
     const results = await chrome.scripting.executeScript({
@@ -204,9 +188,37 @@ $("#autofill").addEventListener("click", async () => {
       seen += v.total || 0;
     }
   } catch (e) { error = e.message; }
-  if (error) setStatus(status, error, "err");
-  else if (filled === 0) setStatus(status, `${seen} fields seen, 0 matched. Update your profile in the dashboard.`, "err");
-  else setStatus(status, `Filled ${filled} of ${seen} fields.`, "ok");
+
+  if (error) { setStatus(status, error, "err"); return; }
+  if (filled === 0 && seen === 0) { setStatus(status, "No form fields found on this page.", "err"); return; }
+  if (filled === 0) { setStatus(status, `${seen} fields seen, 0 matched. Update your profile in the dashboard.`, "err"); return; }
+
+  // Log the application — dedupes against any analyze/autofill in last 30 minutes for the same URL.
+  // Use whatever we already extracted, otherwise pull fresh metadata.
+  let job = lastJobPayload;
+  if (!job) job = await extractCurrentJob();
+  try {
+    const logResp = await chrome.runtime.sendMessage({
+      type: "API_POST", path: "/applications/log",
+      body: {
+        job_title: job?.job_title || "(unknown role)",
+        company: job?.company || "(unknown company)",
+        url: job?.url || tab.url,
+        source: job?.source || "autofill",
+        fields_filled: filled,
+        status: "applied",
+      },
+    });
+    if (logResp?.ok) {
+      lastApplicationId = logResp.data.id;
+      const dedupedNote = logResp.data.deduped ? " (merged with existing record)" : "";
+      setStatus(status, `Filled ${filled} of ${seen} fields · logged as applied${dedupedNote}.`, "ok");
+    } else {
+      setStatus(status, `Filled ${filled} of ${seen} fields (couldn't log: ${logResp?.error || "unknown"})`, "warn");
+    }
+  } catch (e) {
+    setStatus(status, `Filled ${filled} of ${seen} fields (log failed: ${e.message})`, "warn");
+  }
 });
 
 /* ---------- Cover letter ---------- */
@@ -216,8 +228,12 @@ async function generateCoverLetter(){
   const ls = $("#letter-status");
   card.classList.remove("hidden");
   if (!lastJobPayload) {
-    setStatus(ls, "Click Analyze this page first.", "err");
-    return;
+    // Try to extract on the fly
+    lastJobPayload = await extractCurrentJob();
+    if (!lastJobPayload) {
+      setStatus(ls, "Open a job page first.", "err");
+      return;
+    }
   }
   ta.value = "";
   setLoadingStatus(ls, "Drafting tailored cover letter…");

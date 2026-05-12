@@ -9,6 +9,64 @@ from ..models import Application
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
+class LogRequest(BaseModel):
+    """Used when the user triggers Autofill on a page without analyzing first.
+    We create a lightweight Application row so the dashboard tallies it."""
+    job_title: str | None = None
+    company: str | None = None
+    location: str | None = None
+    url: str | None = None
+    source: str | None = None
+    fields_filled: int | None = None
+    status: str = "applied"
+
+@router.post("/log")
+def log_action(body: LogRequest, db: Session = Depends(get_db)):
+    """Idempotent: if a row exists for the same URL within last 30 minutes,
+    update its status instead of creating a new one."""
+    from datetime import datetime, timedelta
+    cutoff = datetime.utcnow() - timedelta(minutes=30)
+
+    existing = None
+    if body.url:
+        existing = (
+            db.query(Application)
+            .filter(Application.url == body.url)
+            .filter(Application.created_at >= cutoff)
+            .order_by(Application.created_at.desc())
+            .first()
+        )
+
+    if existing:
+        # Upgrade status (analyzed -> applied) but don't downgrade
+        rank = {"analyzed": 0, "applied": 1, "interview": 2, "offer": 3, "rejected": 1}
+        if rank.get(body.status, 0) >= rank.get(existing.status or "analyzed", 0):
+            existing.status = body.status
+        note_parts = []
+        if existing.notes:
+            note_parts.append(existing.notes)
+        if body.fields_filled:
+            note_parts.append(f"Autofilled {body.fields_filled} fields at {datetime.utcnow().isoformat()}")
+        existing.notes = " | ".join(note_parts) if note_parts else existing.notes
+        db.commit()
+        return {"id": existing.id, "deduped": True, "status": existing.status}
+
+    # Create new row
+    app = Application(
+        job_title=body.job_title or "(unknown role)",
+        company=body.company or "(unknown company)",
+        location=body.location,
+        url=body.url,
+        source=body.source or "autofill",
+        status=body.status,
+        notes=f"Logged via autofill ({body.fields_filled or 0} fields filled)" if body.fields_filled else "Logged via autofill",
+    )
+    db.add(app)
+    db.commit()
+    db.refresh(app)
+    return {"id": app.id, "deduped": False, "status": app.status}
+
+
 class StatusUpdate(BaseModel):
     status: str
     notes: str | None = None

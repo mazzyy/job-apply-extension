@@ -15,7 +15,6 @@
 
   let currentJobKey = null;
   let card = null;
-  let fab = null;
 
   function $(sel, root = document) { return root.querySelector(sel); }
   function $all(sel, root = document) { return Array.from(root.querySelectorAll(sel)); }
@@ -96,57 +95,99 @@
       card.className = "jaa-card";
       document.body.appendChild(card);
     }
+
+    const header = `
+      <header>
+        <div class="jaa-title">
+          <span class="jaa-logo">J</span>
+          <span>Job Apply Assistant</span>
+        </div>
+        <button class="jaa-x" aria-label="close" title="Close">×</button>
+      </header>`;
+
     if (state.loading){
-      card.innerHTML = `
-        <header>Job Apply Assistant <button class="jaa-x" aria-label="close">×</button></header>
-        <div class="jaa-loading">Analyzing this role against your CV…</div>`;
+      card.innerHTML = header + `
+        <div class="jaa-loading">
+          <div class="jaa-spin"></div>
+          <div>
+            <div style="font-weight:600;color:#0f172a;font-size:13px">Analyzing this role…</div>
+            <div style="font-size:11px;color:#64748b;margin-top:2px">Comparing your CV against the JD</div>
+          </div>
+        </div>`;
     } else if (state.error){
-      card.innerHTML = `
-        <header>Job Apply Assistant <button class="jaa-x" aria-label="close">×</button></header>
-        <div class="jaa-body"><div class="jaa-error">${escapeHtml(state.error)}</div></div>`;
+      card.innerHTML = header + `<div class="jaa-error">${escapeHtml(state.error)}</div>`;
     } else {
       const r = state.result || {};
       const lang = r.language || {};
       const score = Math.round(r.fit_score ?? 0);
-      const langPills = (lang.requires_other_languages || []).map(
-        l => `<span class="jaa-pill lang">${escapeHtml(l)} required</span>`
-      ).join("") || `<span class="jaa-pill good">English OK</span>`;
-      card.innerHTML = `
-        <header>Fit analysis <button class="jaa-x" aria-label="close">×</button></header>
+      const tone = score >= 80 ? { cls: "good", color: "#16a34a" }
+                 : score >= 60 ? { cls: "warn", color: "#d97706" }
+                 :              { cls: "bad",  color: "#dc2626" };
+      const langChips = (lang.requires_other_languages || []).length
+        ? lang.requires_other_languages.map(l => `<span class="jaa-pill lang">${escapeHtml(l)} required</span>`).join("")
+        : `<span class="jaa-pill good">English OK</span>`;
+      const cvLabel = r.cv_used?.label || "—";
+      const cvBadge = (r.cv_selection?.strategy === "auto")
+        ? `<span class="jaa-pill info" title="Auto-selected from your CV library">auto-picked</span>`
+        : "";
+      const jdLen = (r.jd_length || 0).toLocaleString();
+      const warning = r.jd_warning ? `<div class="jaa-warning"><div>${escapeHtml(r.jd_warning)}</div></div>` : "";
+
+      card.innerHTML = header + `
         <div class="jaa-body">
           <div class="jaa-score-row">
-            <div class="jaa-score">${score}<span style="font-size:14px;color:#6b7280">/100</span></div>
-            <div>
-              <span class="jaa-pill ${fitClass(score)}">${escapeHtml(r.fit_label || "")}</span>
-              <div style="font-size:12px;color:#6b7280;margin-top:4px">CV: ${escapeHtml(r.cv_used?.label || "—")}</div>
+            <div class="jaa-ring" style="--p:${score};--c:${tone.color}">
+              <div class="jaa-ring-text">
+                <div class="v" style="color:${tone.color}">${score}</div>
+                <div class="s">/100</div>
+              </div>
+            </div>
+            <div class="jaa-meta">
+              <div class="jaa-fit-label">${escapeHtml(r.fit_label || "—")}</div>
+              <div class="jaa-pills">${langChips}${cvBadge}</div>
             </div>
           </div>
-          <div>${langPills}</div>
-          ${(r.cv_selection?.strategy === "auto")
-            ? `<div style="margin-top:6px;font-size:11px;color:#6b7280">CV: <b>${escapeHtml(r.cv_used?.label || "")}</b> <span style="background:#eef2ff;color:#3730a3;padding:2px 6px;border-radius:999px;font-size:10px;font-weight:600">auto-picked</span> · JD: ${(r.jd_length||0).toLocaleString()} chars</div>`
-            : `<div style="margin-top:6px;font-size:11px;color:#6b7280">JD: <b>${(r.jd_length||0).toLocaleString()}</b> chars analyzed</div>`}
-          ${r.jd_warning
-            ? `<div style="background:#fef3c7;color:#92400e;padding:6px 8px;border-radius:6px;font-size:11px;margin-top:6px">⚠️ ${escapeHtml(r.jd_warning)}</div>`
-            : ""}
-          <div style="margin-top:8px;font-size:13px;color:#374151">${escapeHtml(r.verdict || "")}</div>
-          <div class="jaa-section"><h4>Strengths</h4>
-            <ul class="jaa-list">${(r.strengths||[]).map(s=>`<li>${escapeHtml(s)}</li>`).join("")||"<li>—</li>"}</ul></div>
-          <div class="jaa-section"><h4>What's missing</h4>
-            <ul class="jaa-list">${(r.gaps||[]).map(s=>`<li>${escapeHtml(s)}</li>`).join("")||"<li>—</li>"}</ul></div>
-          <div class="jaa-section"><h4>How to strengthen the application</h4>
-            <ul class="jaa-list">${(r.recommendations||[]).map(s=>`<li>${escapeHtml(s)}</li>`).join("")||"<li>—</li>"}</ul></div>
+
+          <div class="jaa-jd-meta">
+            <span>CV: <b>${escapeHtml(cvLabel)}</b></span>
+            <span>·</span>
+            <span>JD: <b>${jdLen}</b> chars</span>
+          </div>
+
+          ${warning}
+
+          ${r.verdict ? `<div class="jaa-verdict">${escapeHtml(r.verdict)}</div>` : ""}
+
+          <div class="jaa-section strengths">
+            <div class="jaa-section-title"><span class="jaa-swatch"></span> Strengths</div>
+            <ul class="jaa-list">${(r.strengths||[]).map(s=>`<li>${escapeHtml(s)}</li>`).join("") || "<li>—</li>"}</ul>
+          </div>
+
+          <div class="jaa-section gaps">
+            <div class="jaa-section-title"><span class="jaa-swatch"></span> Gaps</div>
+            <ul class="jaa-list">${(r.gaps||[]).map(s=>`<li>${escapeHtml(s)}</li>`).join("") || "<li>—</li>"}</ul>
+          </div>
+
+          <div class="jaa-section recs">
+            <div class="jaa-section-title"><span class="jaa-swatch"></span> Recommendations</div>
+            <ul class="jaa-list">${(r.recommendations||[]).map(s=>`<li>${escapeHtml(s)}</li>`).join("") || "<li>—</li>"}</ul>
+          </div>
+
           <div class="jaa-actions">
             <button class="jaa-btn" id="jaa-mark-applied">Mark as applied</button>
             <button class="jaa-btn secondary" id="jaa-open-dash">Open dashboard</button>
           </div>
         </div>`;
+
       card.querySelector("#jaa-mark-applied")?.addEventListener("click", async () => {
         if (!r.application_id) return;
         await chrome.runtime.sendMessage({
           type: "API_PATCH", path: `/applications/${r.application_id}`,
           body: { status: "applied" },
         });
-        card.querySelector("#jaa-mark-applied").textContent = "Marked ✓";
+        const b = card.querySelector("#jaa-mark-applied");
+        b.textContent = "Marked ✓";
+        b.disabled = true;
       });
       card.querySelector("#jaa-open-dash")?.addEventListener("click", () => {
         window.open("http://localhost:5500/index.html", "_blank");
@@ -155,15 +196,6 @@
     card.querySelector(".jaa-x")?.addEventListener("click", () => { card.remove(); card = null; });
   }
 
-  function ensureFab(){
-    if (fab && document.body.contains(fab)) return;
-    fab = document.createElement("button");
-    fab.className = "jaa-fab";
-    fab.type = "button";
-    fab.innerHTML = `<span class="jaa-dot"></span> Analyze this job`;
-    fab.addEventListener("click", () => analyze(true));
-    document.body.appendChild(fab);
-  }
 
   async function analyze(force = false){
     const job = extractJob();
@@ -198,10 +230,4 @@
     }
   }, 800);
 
-  // Re-inject FAB if LinkedIn nukes it during re-renders
-  const obs = new MutationObserver(() => ensureFab());
-  obs.observe(document.body, { childList: true, subtree: true });
-
-  setTimeout(ensureFab, 1000);
-  setTimeout(ensureFab, 3000);
 })();

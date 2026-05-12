@@ -1,3 +1,4 @@
+/* Lever — no on-page UI. */
 (function () {
   if (window.__jaaLeverLoaded) return;
   window.__jaaLeverLoaded = true;
@@ -5,40 +6,11 @@
   function $(s,r=document){return r.querySelector(s)}
   function txt(el){return (el?.innerText||"").trim()}
 
-  function extractJob() {
+  window.__jaaExtractJob = function () {
     const title = txt($(".posting-headline h2") || $("h2") || $("h1"));
     const company = (location.hostname.split(".")[0] || "").replace(/^www$/, "");
     const desc = txt($(".posting-page") || $(".content-wrapper") || $("main") || document.body);
     if (!title || !desc || desc.length < 200) return null;
     return { job_title:title, company, location:"", job_description:desc, url:location.href, source:"lever" };
-  }
-
-  function injectFab() {
-    if (document.querySelector(".jaa-fab")) return;
-    const btn = document.createElement("button");
-    btn.className = "jaa-fab";
-    btn.type = "button";
-    btn.innerHTML = `<span class="jaa-dot"></span> Analyze & autofill`;
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
-      const original = btn.innerHTML;
-      btn.innerHTML = `<span class="jaa-dot"></span> Working…`;
-      const job = extractJob();
-      if (job) chrome.runtime.sendMessage({ type: "ANALYZE_JOB", payload: job }).catch(()=>{});
-      if (window.JAA_Autofill) {
-        const r = await window.JAA_Autofill.fillAll();
-        if (r.error) btn.innerHTML = `<span class="jaa-dot"></span> ${r.error}`;
-        else btn.innerHTML = `<span class="jaa-dot"></span> Filled ${r.filled}/${r.total}`;
-      } else {
-        btn.innerHTML = original;
-      }
-      btn.disabled = false;
-      setTimeout(() => { if (btn.isConnected) btn.innerHTML = original; }, 6000);
-    });
-    document.body.appendChild(btn);
-  }
-
-  setTimeout(injectFab, 1200);
-  new MutationObserver(() => { if (!document.querySelector(".jaa-fab")) injectFab(); })
-    .observe(document.body, { childList: true, subtree: true });
+  };
 })();
