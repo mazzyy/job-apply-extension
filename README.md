@@ -5,7 +5,56 @@ An end-to-end job application copilot:
 - **FastAPI backend** that parses your CV(s), calls Azure OpenAI (`gpt-5-mini`) for fit analysis, and stores every application you've analyzed.
 - **Dashboard website** that shows your CV library, profile (used for autofill), full application history, and analytics (fit-score distribution, sources, statuses).
 
+## Features
+
+- **Automated Fit Analysis**: Analyzes job descriptions against your active CV and provides a fit score, strengths, gaps, and recommendations.
+- **Form Autofill**: Automatically fills application forms on supported job boards (Greenhouse, Lever) using your saved profile data.
+- **Language Detection**: Warns you if a job description contains requirements for a non-English language (e.g., German, French).
+- **CV Management**: Upload and manage multiple CVs, setting an active one for analysis.
+- **Application Tracking**: Keeps a history of all analyzed and applied jobs with their statuses.
+- **Analytics Dashboard**: Visualizes your application data, including fit-score distribution, job sources, and application statuses.
+- **Chrome Side Panel**: Quick access to settings and application details without leaving the job board.
+
+## Architecture
+
+```mermaid
+graph TD
+    subgraph Browser["Web Browser"]
+        EXT[Chrome Extension]
+        DP[Dashboard Website]
+        CS[Content Scripts]
+        SP[Side Panel]
+        
+        EXT --- CS
+        EXT --- SP
+        CS -- "Extracts Job Data & Autofill" --> JobBoards[Job Boards: LinkedIn, Greenhouse, Lever]
+    end
+
+    subgraph BackendApp["FastAPI Backend (localhost:8000)"]
+        API[REST API Routes]
+        Analyzer[Analyzer Service]
+        Lang[Language Detection]
+        DB[(SQLite Database)]
+        
+        API --> Analyzer
+        API --> Lang
+        API --> DB
+    end
+
+    subgraph External["External API"]
+        LLM[Azure OpenAI]
+    end
+
+    CS -- "HTTP POST" --> API
+    SP -- "HTTP GET/POST" --> API
+    DP -- "HTTP GET/POST" --> API
+    
+    Analyzer -- "Prompt & Analysis" --> LLM
 ```
+
+## Directory Structure
+
+```text
 job apply extension/
 ├── backend/     FastAPI + SQLite + Azure OpenAI
 ├── extension/   Chrome MV3 extension (LinkedIn, Greenhouse, Lever)
@@ -31,7 +80,6 @@ AZURE_OPENAI_DEPLOYMENT=gpt-5-mini
 AZURE_OPENAI_API_VERSION=2024-02-15-preview
 ```
 
-> ⚠️ Rotate the key you pasted earlier in the Azure portal — it was shared in chat.
 
 ## 2. Load the Chrome extension
 
