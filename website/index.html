@@ -15,6 +15,9 @@
   <nav>
     <a href="#overview" data-tab="overview" class="active">Overview</a>
     <a href="#applications" data-tab="applications">Applications</a>
+    <a href="#analytics" data-tab="analytics">Analytics</a>
+    <a href="#questions" data-tab="questions">Question library</a>
+    <a href="#inbox" data-tab="inbox">Inbox (email)</a>
     <a href="#cvs" data-tab="cvs">My CVs</a>
     <a href="#profile" data-tab="profile">Profile (autofill)</a>
     <a href="#settings" data-tab="settings">Settings</a>
@@ -73,6 +76,66 @@
       </thead>
       <tbody id="apps-body"></tbody>
     </table>
+  </section>
+
+  <section id="tab-analytics" class="tab">
+    <h1>Analytics</h1>
+    <div id="analytics-insights" class="card"></div>
+    <div class="grid stats" id="analytics-funnel"></div>
+    <div class="grid two">
+      <div class="card">
+        <h3>Average fit by outcome</h3>
+        <div id="fit-by-outcome" class="buckets"></div>
+      </div>
+      <div class="card">
+        <h3>Response time</h3>
+        <div id="response-time" class="muted">No responses tracked yet.</div>
+      </div>
+    </div>
+    <div class="grid two">
+      <div class="card">
+        <h3>Top recurring gaps</h3>
+        <div id="top-gaps"></div>
+      </div>
+      <div class="card">
+        <h3>CV performance</h3>
+        <table class="apps"><thead><tr><th>CV</th><th>Used</th><th>Interview rate</th><th>Avg fit</th></tr></thead>
+        <tbody id="cv-perf-body"></tbody></table>
+      </div>
+    </div>
+    <div class="grid two">
+      <div class="card">
+        <h3>Source effectiveness</h3>
+        <table class="apps"><thead><tr><th>Source</th><th>Total</th><th>Interview rate</th><th>Offer rate</th></tr></thead>
+        <tbody id="source-perf-body"></tbody></table>
+      </div>
+      <div class="card">
+        <h3>Language demand</h3>
+        <div id="lang-demand" class="buckets"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-questions" class="tab">
+    <h1>Question library</h1>
+    <form id="q-form" class="card">
+      <h3>Add a question</h3>
+      <input name="text" placeholder="E.g. Why do you want to work at our company?" required />
+      <input name="tags" placeholder="Tags (comma-separated, optional)" />
+      <button type="submit">Add question</button>
+    </form>
+    <div id="q-list"></div>
+  </section>
+
+  <section id="tab-inbox" class="tab">
+    <h1>Inbox · email parser</h1>
+    <div class="card">
+      <h3>Paste a recruiter email</h3>
+      <p class="muted">Paste an interview invite, rejection, or recruiter message. We classify it and update the matching application's status.</p>
+      <textarea id="email-text" rows="10" placeholder="Hi Sain, We'd love to invite you for an interview..."></textarea>
+      <button id="parse-email">Parse email</button>
+      <div id="email-result"></div>
+    </div>
   </section>
 
   <section id="tab-cvs" class="tab">

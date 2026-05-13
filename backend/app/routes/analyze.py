@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import CV, Application
+from ..services.events import emit
 from ..services.analyzer import analyze_fit, answer_application_question, _chat
 from ..services.language import scan_language_requirements
 from ..services.cv_match import pick_best_cv, score_cv_against_jd
@@ -118,8 +119,10 @@ def analyze(req: AnalyzeRequest, db: Session = Depends(get_db)):
             status="analyzed",
         )
         db.add(app)
-        db.commit()
-        db.refresh(app)
+        db.commit(); db.refresh(app)
+        emit(db, app.id, kind="analyzed",
+             title=f"Analyzed · {int(fit.get('fit_score') or 0)}/100 · {fit.get('fit_label','')}",
+             detail=fit.get("verdict"), source="analyzer")
         result["application_id"] = app.id
 
     return result

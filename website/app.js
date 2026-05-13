@@ -248,3 +248,208 @@ $("#reverify")?.addEventListener("click", async () => {
     if (v) v.textContent = "Error: " + e.message;
   }
 });
+
+/* ============================== Analytics ============================== */
+async function loadAnalytics(){
+  let o, ins;
+  try {
+    [o, ins] = await Promise.all([
+      API.get("/analytics/overview"),
+      API.get("/analytics/insights"),
+    ]);
+  } catch (e) { return; }
+
+  $("#analytics-insights").innerHTML = (ins.notes || []).length
+    ? '<h3 style="margin-top:0">Insights</h3>' + ins.notes.map(n => `<div class="note">${esc(n)}</div>`).join("")
+    : '<h3 style="margin-top:0">Insights</h3><div class="muted">Analyze a few more roles to unlock insights.</div>';
+
+  const f = o.funnel || {};
+  const r = o.rates || {};
+  $("#analytics-funnel").innerHTML = `
+    <div class="stat"><span>${f.analyzed||0}</span><label>Analyzed</label></div>
+    <div class="stat"><span>${f.applied||0}</span><label>Applied</label></div>
+    <div class="stat"><span>${f.interview||0}</span><label>Interviewing</label></div>
+    <div class="stat"><span>${f.offer||0}</span><label>Offers</label></div>
+    <div class="stat"><span>${r.response_rate||0}%</span><label>Response rate</label></div>`;
+
+  // Fit by outcome
+  const fits = o.avg_fit_by_outcome || {};
+  const keys = ["all","interview","rejected","offer"];
+  const maxF = Math.max(1, ...keys.map(k=>fits[k]||0));
+  $("#fit-by-outcome").innerHTML = keys.map(k=>`
+    <div class="bucket"><span>${fits[k]||0}</span>
+      <div class="bar" style="height:${((fits[k]||0)/maxF)*100}%"></div>
+      <label>${esc(k)}</label></div>`).join("");
+
+  // Response time
+  const rt = o.response_times_days || {};
+  $("#response-time").innerHTML = rt.count > 0
+    ? `<div style="display:flex;gap:14px;flex-wrap:wrap">
+        <div><b>${rt.avg_days}</b> days <span class="muted">avg</span></div>
+        <div><b>${rt.median_days}</b> <span class="muted">median</span></div>
+        <div><b>${rt.fastest_days}</b> <span class="muted">fastest</span></div>
+        <div><b>${rt.slowest_days}</b> <span class="muted">slowest</span></div>
+        <div class="muted">based on ${rt.count} responses</div></div>`
+    : '<div class="muted">No responses tracked yet. Paste a recruiter email in Inbox to log one.</div>';
+
+  // Top gaps
+  $("#top-gaps").innerHTML = (o.top_gaps||[]).length
+    ? (o.top_gaps||[]).map(g => `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed #f1f5f9">
+        <span>${esc(g.gap)}</span><b>${g.count}×</b></div>`).join("")
+    : '<div class="muted">No gaps recorded yet.</div>';
+
+  // CV performance
+  $("#cv-perf-body").innerHTML = (o.cv_performance||[]).map(p=>`
+    <tr><td>${esc(p.cv_label)}</td><td>${p.used}</td>
+        <td>${p.interview_rate}%</td><td>${p.avg_fit}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">No data yet.</td></tr>`;
+
+  // Source effectiveness
+  $("#source-perf-body").innerHTML = (o.source_effectiveness||[]).map(p=>`
+    <tr><td>${esc(p.source)}</td><td>${p.total}</td>
+        <td>${p.interview_rate}%</td><td>${p.offer_rate}%</td></tr>`).join("") || `<tr><td colspan="4" class="muted">No data yet.</td></tr>`;
+
+  // Language demand
+  const lang = o.language_demand?.by_language || {};
+  const langMax = Math.max(1, ...Object.values(lang));
+  $("#lang-demand").innerHTML = Object.keys(lang).length
+    ? Object.entries(lang).map(([k,v])=>`<div class="bucket"><span>${v}</span><div class="bar" style="height:${(v/langMax)*100}%"></div><label>${esc(k)}</label></div>`).join("")
+    : '<div class="muted">All English so far.</div>';
+}
+
+/* ============================== Question library ============================== */
+async function loadQuestions(){
+  const rows = await API.get("/questions/").catch(()=>[]);
+  if (!rows.length) {
+    $("#q-list").innerHTML = '<div class="muted">No saved questions yet. Add one above, or use the extension on an application form to capture questions automatically.</div>';
+    return;
+  }
+  $("#q-list").innerHTML = rows.map(q => `
+    <div class="q-card" data-qid="${q.id}">
+      <div class="q-text">${esc(q.text)}</div>
+      <div class="q-meta">${esc(q.category || "other")} · used ${q.use_count}× · ${q.answers.length} answer${q.answers.length===1?"":"s"}</div>
+      <div class="a-list">${
+        q.answers.map(a => `
+          <div class="a-item">
+            ${a.is_default ? '<span class="fit-pill good" style="font-size:10px;margin-right:6px">default</span>' : ''}
+            ${esc(a.answer).replace(/\n/g,'<br/>')}
+            <div class="a-actions">
+              <button class="secondary copy-a" data-text="${esc(a.answer)}">Copy</button>
+              ${!a.is_default ? `<button class="secondary make-default" data-aid="${a.id}">Make default</button>` : ''}
+              <button class="danger del-a" data-aid="${a.id}">Delete</button>
+            </div>
+          </div>`).join("") || '<div class="muted">No answers yet — add one below.</div>'
+      }</div>
+      <div class="add-a">
+        <textarea placeholder="Write a new answer or draft with AI…"></textarea>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <button class="save-a">Save</button>
+          <button class="draft-a secondary">Draft with AI</button>
+          <button class="del-q danger">Delete Q</button>
+        </div>
+      </div>
+    </div>`).join("");
+
+  $all(".q-card").forEach(card => {
+    const qid = +card.dataset.qid;
+    card.querySelectorAll(".copy-a").forEach(b => b.addEventListener("click", () => {
+      navigator.clipboard.writeText(b.dataset.text);
+      b.textContent = "Copied"; setTimeout(()=>b.textContent="Copy", 1200);
+    }));
+    card.querySelectorAll(".make-default").forEach(b => b.addEventListener("click", async () => {
+      await API.patch(`/questions/answers/${b.dataset.aid}`, { answer: b.parentElement.parentElement.childNodes[2].textContent.trim(), is_default: true });
+      loadQuestions();
+    }));
+    card.querySelectorAll(".del-a").forEach(b => b.addEventListener("click", async () => {
+      if (!confirm("Delete this answer?")) return;
+      await API.del(`/questions/answers/${b.dataset.aid}`); loadQuestions();
+    }));
+    card.querySelector(".save-a").addEventListener("click", async (e) => {
+      e.preventDefault();
+      const ta = card.querySelector(".add-a textarea");
+      if (!ta.value.trim()) return;
+      await API.post(`/questions/${qid}/answers`, { answer: ta.value.trim(), is_default: false });
+      ta.value = ""; loadQuestions();
+    });
+    card.querySelector(".draft-a").addEventListener("click", async (e) => {
+      e.preventDefault();
+      const ta = card.querySelector(".add-a textarea");
+      ta.value = "Drafting…";
+      const q = rows.find(r => r.id === qid);
+      const r = await API.post("/questions/draft", { text: q.text, save: false });
+      ta.value = r.answer || "";
+    });
+    card.querySelector(".del-q").addEventListener("click", async (e) => {
+      e.preventDefault();
+      if (!confirm("Delete this question and all its answers?")) return;
+      await API.del(`/questions/${qid}`); loadQuestions();
+    });
+  });
+}
+
+$("#q-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  await API.post("/questions/", { text: fd.get("text"), tags: fd.get("tags") || null });
+  e.target.reset(); loadQuestions();
+});
+
+/* ============================== Inbox · email parser ============================== */
+$("#parse-email")?.addEventListener("click", async () => {
+  const text = $("#email-text").value.trim();
+  const res = $("#email-result");
+  if (!text) { res.innerHTML = '<div class="muted">Paste an email first.</div>'; return; }
+  res.innerHTML = '<div class="muted">Classifying…</div>';
+  try {
+    const r = await API.post("/emails/parse", { text, apply: true });
+    res.innerHTML = `
+      <div class="res-card">
+        <div class="kv"><b>Kind:</b> ${esc(r.kind || "—")} <span class="muted">(conf ${Math.round((r.confidence||0)*100)}%)</span></div>
+        <div class="kv"><b>Summary:</b> ${esc(r.summary || "—")}</div>
+        ${r.matched_application_id
+          ? `<div class="kv"><b>Matched:</b> <a href="#" data-id="${r.matched_application_id}" class="open-app">${esc(r.matched_application_title || "")} · ${esc(r.matched_application_company || "")}</a></div>`
+          : `<div class="kv"><b>Matched:</b> <span class="muted">No application found — add it first.</span></div>`}
+        ${r.suggested_status ? `<div class="kv"><b>Suggested status:</b> ${esc(r.suggested_status)}</div>` : ''}
+        ${r.interview_datetime ? `<div class="kv"><b>Interview:</b> ${esc(r.interview_datetime)}</div>` : ''}
+        ${r.salary_mentioned ? `<div class="kv"><b>Salary mentioned:</b> ${esc(r.salary_mentioned)}</div>` : ''}
+        ${r.next_action ? `<div class="kv"><b>Next action:</b> ${esc(r.next_action)}</div>` : ''}
+        <div class="kv"><b>Applied to record?</b> ${r.applied ? "Yes" : "No"}${r.status_changed ? " · status updated" : ""}</div>
+      </div>`;
+    $all(".open-app").forEach(el => el.addEventListener("click", (e) => { e.preventDefault(); openApp(+el.dataset.id); }));
+    if (r.applied) { await Promise.all([loadStats(), loadApps()]); }
+  } catch (e) {
+    res.innerHTML = `<div class="muted" style="color:#b91c1c">Error: ${esc(e.message)}</div>`;
+  }
+});
+
+/* ============================== Activity timeline in app detail ============================== */
+async function appendTimelineToDetail(appId){
+  try {
+    const events = await API.get(`/applications/${appId}/events`);
+    if (!events.length) return;
+    const html = `
+      <h3 style="margin-top:14px">Activity</h3>
+      <div class="timeline">
+        ${events.map(e => `
+          <div class="ev ${esc(e.kind)}">
+            <div class="ev-title">${esc(e.title || e.kind)}</div>
+            ${e.detail ? `<div class="ev-detail">${esc(e.detail.slice(0,400))}${e.detail.length>400?"…":""}</div>` : ""}
+            <div class="ev-when">${new Date(e.created_at).toLocaleString()} · ${esc(e.source || "")}</div>
+          </div>`).join("")}
+      </div>`;
+    const body = $("#app-detail-body");
+    if (body) body.insertAdjacentHTML("beforeend", html);
+  } catch {}
+}
+
+// Wrap openApp to also fetch the timeline
+const _origOpenApp = openApp;
+openApp = async function(id) {
+  await _origOpenApp(id);
+  await appendTimelineToDetail(id);
+};
+
+/* ============================== Tab change hooks ============================== */
+document.querySelectorAll(".sidebar a").forEach(a => a.addEventListener("click", async () => {
+  if (a.dataset.tab === "analytics") loadAnalytics();
+  if (a.dataset.tab === "questions") loadQuestions();
+}));

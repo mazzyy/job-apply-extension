@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Job Apply Assistant",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Analyze job fit, autofill applications, and track every role you apply to \u2014 across LinkedIn, Greenhouse, Lever, Ashby and custom career sites.",
   "permissions": [
     "activeTab",
@@ -60,7 +60,8 @@
       ],
       "js": [
         "content/linkedin.js",
-        "content/apply_watcher.js"
+        "content/apply_watcher.js",
+        "content/question_suggest.js"
       ],
       "css": [
         "content/overlay.css"
@@ -77,7 +78,8 @@
       "js": [
         "content/autofill.js",
         "content/apply_watcher.js",
-        "content/greenhouse.js"
+        "content/greenhouse.js",
+        "content/question_suggest.js"
       ],
       "css": [
         "content/overlay.css"
@@ -93,7 +95,8 @@
       "js": [
         "content/autofill.js",
         "content/apply_watcher.js",
-        "content/lever.js"
+        "content/lever.js",
+        "content/question_suggest.js"
       ],
       "css": [
         "content/overlay.css"
@@ -108,7 +111,8 @@
       "js": [
         "content/autofill.js",
         "content/apply_watcher.js",
-        "content/ashby.js"
+        "content/ashby.js",
+        "content/question_suggest.js"
       ],
       "css": [
         "content/overlay.css"
@@ -122,7 +126,8 @@
       "js": [
         "content/autofill.js",
         "content/apply_watcher.js",
-        "content/generic.js"
+        "content/generic.js",
+        "content/question_suggest.js"
       ],
       "css": [
         "content/overlay.css"

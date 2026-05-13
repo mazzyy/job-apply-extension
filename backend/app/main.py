@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from .database import Base, engine
 from .config import settings
-from .routes import cvs, analyze, applications, profile
+from .routes import cvs, analyze, applications, profile, questions, emails, analytics
 from .services.analyzer import verify_model
 
 logging.basicConfig(
@@ -87,3 +87,6 @@ app.include_router(cvs.router)
 app.include_router(analyze.router)
 app.include_router(applications.router)
 app.include_router(profile.router)
+app.include_router(questions.router)
+app.include_router(emails.router)
+app.include_router(analytics.router)

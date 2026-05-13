@@ -5,7 +5,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from ..database import get_db
-from ..models import Application
+from ..models import Application, ApplicationEvent
+from ..services.events import emit
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
@@ -38,9 +39,9 @@ def log_action(body: LogRequest, db: Session = Depends(get_db)):
         )
 
     if existing:
-        # Upgrade status (analyzed -> applied) but don't downgrade
         rank = {"analyzed": 0, "applied": 1, "interview": 2, "offer": 3, "rejected": 1}
-        if rank.get(body.status, 0) >= rank.get(existing.status or "analyzed", 0):
+        prev = existing.status or "analyzed"
+        if rank.get(body.status, 0) >= rank.get(prev, 0):
             existing.status = body.status
         note_parts = []
         if existing.notes:
@@ -48,6 +49,13 @@ def log_action(body: LogRequest, db: Session = Depends(get_db)):
         if body.fields_filled:
             note_parts.append(f"Autofilled {body.fields_filled} fields at {datetime.utcnow().isoformat()}")
         existing.notes = " | ".join(note_parts) if note_parts else existing.notes
+        emit(db, existing.id, kind="autofilled",
+             title=f"Autofilled {body.fields_filled or 0} fields",
+             source="autofill", commit=False)
+        if prev != existing.status:
+            emit(db, existing.id, kind="status_change",
+                 title=f"Status: {prev} → {existing.status}",
+                 source="autofill", commit=False)
         db.commit()
         return {"id": existing.id, "deduped": True, "status": existing.status}
 
@@ -62,8 +70,10 @@ def log_action(body: LogRequest, db: Session = Depends(get_db)):
         notes=f"Logged via autofill ({body.fields_filled or 0} fields filled)" if body.fields_filled else "Logged via autofill",
     )
     db.add(app)
-    db.commit()
-    db.refresh(app)
+    db.commit(); db.refresh(app)
+    emit(db, app.id, kind="applied",
+         title=f"Applied via autofill — {body.fields_filled or 0} fields filled",
+         source="autofill")
     return {"id": app.id, "deduped": False, "status": app.status}
 
 
@@ -116,9 +126,14 @@ def update_status(app_id: int, body: StatusUpdate, db: Session = Depends(get_db)
     a = db.query(Application).filter(Application.id == app_id).first()
     if not a:
         raise HTTPException(404, "Not found")
+    prev = a.status
     a.status = body.status
     if body.notes is not None:
         a.notes = body.notes
+    if prev != body.status:
+        emit(db, a.id, kind="status_change",
+             title=f"Status: {prev} → {body.status}",
+             detail=body.notes or None, source="ui", commit=False)
     db.commit()
     return _to_dict(a)
 
@@ -151,3 +166,33 @@ def _safe(s):
     if not s: return []
     try: return json.loads(s)
     except Exception: return []
+
+@router.get("/{app_id}/events")
+def list_events(app_id: int, db: Session = Depends(get_db)):
+    a = db.query(Application).filter(Application.id == app_id).first()
+    if not a:
+        raise HTTPException(404, "Not found")
+    events = (
+        db.query(ApplicationEvent)
+        .filter(ApplicationEvent.application_id == app_id)
+        .order_by(ApplicationEvent.created_at.asc())
+        .all()
+    )
+    return [
+        {"id": e.id, "kind": e.kind, "title": e.title, "detail": e.detail,
+         "source": e.source, "created_at": e.created_at.isoformat()}
+        for e in events
+    ]
+
+
+@router.post("/{app_id}/events")
+def add_event(app_id: int, body: dict, db: Session = Depends(get_db)):
+    a = db.query(Application).filter(Application.id == app_id).first()
+    if not a:
+        raise HTTPException(404, "Not found")
+    e = emit(db, app_id,
+             kind=body.get("kind", "note"),
+             title=body.get("title"),
+             detail=body.get("detail"),
+             source=body.get("source", "ui"))
+    return {"id": e.id}
