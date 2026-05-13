@@ -190,13 +190,29 @@ $("#autofill").addEventListener("click", async () => {
   } catch (e) { error = e.message; }
 
   if (error) { setStatus(status, error, "err"); return; }
-  if (filled === 0 && seen === 0) { setStatus(status, "No form fields found on this page.", "err"); return; }
-  if (filled === 0) { setStatus(status, `${seen} fields seen, 0 matched. Update your profile in the dashboard.`, "err"); return; }
 
-  // Log the application — dedupes against any analyze/autofill in last 30 minutes for the same URL.
-  // Use whatever we already extracted, otherwise pull fresh metadata.
+  // Resolve job metadata for logging — pull from page if we don't already have it
   let job = lastJobPayload;
   if (!job) job = await extractCurrentJob();
+
+  // No form fields at all: offer to log the role anyway (common on German recruiter
+  // pages where the Apply flow is an external mailto link).
+  if (seen === 0) {
+    if (!job || !job.job_title) {
+      setStatus(status, "No form fields and no job content found on this page.", "err");
+      return;
+    }
+    if (!confirm(`No application form on this page (Apply is likely via email or external link).\n\nLog "${(job.job_title||'').slice(0,80)}" at ${(job.company||'')} as applied anyway?`)) {
+      setStatus(status, "Cancelled — nothing logged.", "err");
+      return;
+    }
+    // fall through to logging below with filled=0
+  }
+  // Some fields but none matched profile
+  if (seen > 0 && filled === 0) {
+    setStatus(status, `${seen} fields seen, 0 matched your profile. Update your profile in the dashboard for better autofill.`, "err");
+    return;
+  }
   try {
     const logResp = await chrome.runtime.sendMessage({
       type: "API_POST", path: "/applications/log",
