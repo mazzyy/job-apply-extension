@@ -301,3 +301,33 @@ $("#save-settings").addEventListener("click", async () => {
 
 refreshHeader();
 setInterval(refreshHeader, 30000);
+
+/* ============================== Easy Apply guided ============================== */
+$("#easyapply-btn")?.addEventListener("click", async () => {
+  const status = $("#action-status");
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.url || !/linkedin\.com\/jobs/.test(tab.url)) {
+    setStatus(status, "Open a LinkedIn job page first.", "err"); return;
+  }
+  setLoadingStatus(status, "Driving Easy Apply form…");
+  try {
+    // Make sure both scripts are present
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content/linkedin.js"] }).catch(()=>{});
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content/linkedin_easyapply.js"] }).catch(()=>{});
+    const [{ result } = {}] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: async () => window.__jaaRunEasyApply ? await window.__jaaRunEasyApply() : { error: "Easy Apply script not loaded" },
+    });
+    const r = result || {};
+    if (r.error) { setStatus(status, r.error, "err"); return; }
+    if (r.stopped === "review_ready") {
+      setStatus(status, `Filled ${r.filled} fields across ${r.steps} steps. Review and click Submit on LinkedIn.`, "ok");
+    } else if (r.stopped === "required_field_blank") {
+      setStatus(status, `Stopped at a step with required blank fields (highlighted). Fill them and click Next.`, "warn");
+    } else {
+      setStatus(status, `Stopped: ${r.stopped || "unknown"} (filled ${r.filled||0})`, "warn");
+    }
+  } catch (e) {
+    setStatus(status, "Error: " + e.message, "err");
+  }
+});

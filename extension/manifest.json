@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Job Apply Assistant",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Analyze job fit, autofill applications, and track every role you apply to \u2014 across LinkedIn, Greenhouse, Lever, Ashby and custom career sites.",
   "permissions": [
     "activeTab",
@@ -61,7 +61,8 @@
       "js": [
         "content/linkedin.js",
         "content/apply_watcher.js",
-        "content/question_suggest.js"
+        "content/question_suggest.js",
+        "content/linkedin_easyapply.js"
       ],
       "css": [
         "content/overlay.css"
