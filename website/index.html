@@ -16,6 +16,7 @@
     <a href="#overview" data-tab="overview" class="active">Overview</a>
     <a href="#applications" data-tab="applications">Applications</a>
     <a href="#analytics" data-tab="analytics">Analytics</a>
+    <a href="#answers" data-tab="answers">My answers (bank)</a>
     <a href="#questions" data-tab="questions">Question library</a>
     <a href="#inbox" data-tab="inbox">Inbox (email)</a>
     <a href="#cvs" data-tab="cvs">My CVs</a>
@@ -114,6 +115,66 @@
         <div id="lang-demand" class="buckets"></div>
       </div>
     </div>
+  </section>
+
+  <section id="tab-answers" class="tab">
+    <h1>My answers</h1>
+    <p class="muted">Fill these in once. Easy Apply and Autofill will reuse them across every job — no LLM guessing, no needs-review queue.</p>
+    <div style="margin:12px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button id="seed-bank-btn">Load 280+ common questions</button>
+      <input id="bank-search" placeholder="Search questions…" style="flex:1;min-width:200px"/>
+      <select id="bank-cat-filter">
+        <option value="">All categories</option>
+        <option value="technical">Technical</option>
+        <option value="logistics">Logistics</option>
+        <option value="salary">Salary</option>
+        <option value="motivation">Motivation</option>
+        <option value="behavioral">Behavioral</option>
+        <option value="diversity">Diversity / EEO</option>
+        <option value="other">Other</option>
+      </select>
+      <span id="seed-status" class="muted"></span>
+    </div>
+
+    <details class="card" style="margin-bottom:14px">
+      <summary style="cursor:pointer;font-weight:600">➕ Add a custom question</summary>
+      <form id="custom-q-form" style="display:grid;gap:8px;margin-top:10px">
+        <label>Question text
+          <input name="text" required placeholder="e.g. How many years of FastAPI experience do you have?"/>
+        </label>
+        <label>Category
+          <select name="category">
+            <option value="technical">Technical</option>
+            <option value="logistics">Logistics</option>
+            <option value="salary">Salary</option>
+            <option value="motivation">Motivation</option>
+            <option value="behavioral">Behavioral</option>
+            <option value="diversity">Diversity / EEO</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        <label>Input type
+          <select name="input_type" id="ct-type">
+            <option value="number">Number (years, rating, count…)</option>
+            <option value="text" selected>Short text (one line)</option>
+            <option value="textarea">Long text (paragraph)</option>
+            <option value="select">Dropdown (select)</option>
+            <option value="radio">Radio buttons</option>
+          </select>
+        </label>
+        <label id="ct-options-wrap" style="display:none">Options (comma-separated)
+          <input name="options" placeholder="e.g. Yes, No  ·  or  ·  Native, Fluent, Professional, Basic, None"/>
+        </label>
+        <label style="display:flex;gap:6px;align-items:center">
+          <span>Your answer:</span>
+          <span id="ct-answer-wrap" style="flex:1"></span>
+        </label>
+        <button type="submit">Add question + save answer</button>
+        <div id="custom-status" class="muted"></div>
+      </form>
+    </details>
+
+    <div id="bank-categories"></div>
   </section>
 
   <section id="tab-questions" class="tab">

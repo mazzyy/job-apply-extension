@@ -367,7 +367,7 @@ async function loadQuestions(){
       e.preventDefault();
       const ta = card.querySelector(".add-a textarea");
       if (!ta.value.trim()) return;
-      await API.post(`/questions/${qid}/answers`, { answer: ta.value.trim(), is_default: false });
+      await API.post(`/questions/by-id/${qid}/answers`, { answer: ta.value.trim(), is_default: false });
       ta.value = ""; loadQuestions();
     });
     card.querySelector(".draft-a").addEventListener("click", async (e) => {
@@ -381,7 +381,7 @@ async function loadQuestions(){
     card.querySelector(".del-q").addEventListener("click", async (e) => {
       e.preventDefault();
       if (!confirm("Delete this question and all its answers?")) return;
-      await API.del(`/questions/${qid}`); loadQuestions();
+      await API.del(`/questions/by-id/${qid}`); loadQuestions();
     });
   });
 }
@@ -487,18 +487,18 @@ async function loadNeedsReview(){
       if (ans) {
         await API.patch(`/questions/answers/${ans.id}`, { answer: ta.value, is_default: true });
       } else {
-        await API.post(`/questions/${qid}/answers`, { answer: ta.value, is_default: true });
+        await API.post(`/questions/by-id/${qid}/answers`, { answer: ta.value, is_default: true });
       }
-      await API.post(`/questions/${qid}/mark-reviewed`, {});
+      await API.post(`/questions/by-id/${qid}/mark-reviewed`, {});
       loadNeedsReview(); loadQuestions();
     });
     card.querySelector(".nr-skip").addEventListener("click", async () => {
-      await API.post(`/questions/${qid}/mark-reviewed`, {});
+      await API.post(`/questions/by-id/${qid}/mark-reviewed`, {});
       loadNeedsReview(); loadQuestions();
     });
     card.querySelector(".nr-delete").addEventListener("click", async () => {
       if (!confirm("Delete this question entirely?")) return;
-      await API.del(`/questions/${qid}`);
+      await API.del(`/questions/by-id/${qid}`);
       loadNeedsReview(); loadQuestions();
     });
   });
@@ -507,4 +507,206 @@ async function loadNeedsReview(){
 // Hook into tab change
 document.querySelectorAll(".sidebar a").forEach(a => a.addEventListener("click", async () => {
   if (a.dataset.tab === "questions") loadNeedsReview();
+}));
+
+/* ============================== My answers (curated bank) ============================== */
+let _bankRows = [];
+
+async function loadAnswerBank(){
+  _bankRows = await API.get("/questions/").catch(()=>[]);
+  renderBank();
+}
+
+function renderBank(){
+  const search = ($("#bank-search")?.value || "").toLowerCase();
+  const catFilter = $("#bank-cat-filter")?.value || "";
+  const rows = _bankRows.filter(q => {
+    if (catFilter && (q.category || "other") !== catFilter) return false;
+    if (search && !q.text.toLowerCase().includes(search)) return false;
+    return true;
+  });
+  if (!rows.length) {
+    $("#bank-categories").innerHTML = '<div class="muted">No matching questions. Click "Load 280+ common questions" above, or add a custom one.</div>';
+    return;
+  }
+  const byCat = {};
+  rows.forEach(q => {
+    const c = q.category || "other";
+    (byCat[c] = byCat[c] || []).push(q);
+  });
+  const order = ["technical", "logistics", "salary", "motivation", "behavioral", "diversity", "other"];
+  const sortedCats = Object.keys(byCat).sort((a,b) => (order.indexOf(a) === -1 ? 99 : order.indexOf(a)) - (order.indexOf(b) === -1 ? 99 : order.indexOf(b)));
+
+  $("#bank-categories").innerHTML = sortedCats.map(cat => `
+    <div class="card" style="margin-bottom:14px">
+      <h3 style="text-transform:capitalize">${esc(cat)} <span class="muted" style="font-weight:400;font-size:12px">(${byCat[cat].length})</span></h3>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        ${byCat[cat].map(q => renderBankRow(q)).join("")}
+      </div>
+    </div>`).join("");
+
+  wireBankRows();
+}
+
+function renderBankRow(q){
+  const def = (q.answers || []).find(a => a.is_default);
+  const opts = q.last_options ? JSON.parse(q.last_options) : null;
+  const inputType = q.last_input_type || "text";
+  const value = def?.answer || "";
+  const inputHtml = renderAnswerInput(q.id, inputType, opts, value);
+  return `<div class="bank-row" data-qid="${q.id}" style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px dashed #f1f5f9">
+    <div style="flex:1;min-width:0">
+      <div class="bank-q-view" style="font-size:13px;${def?'':'color:#92400e'}">
+        ${esc(q.text)}${def?' <span style="color:#16a34a">✓</span>':''}
+        <button class="ghost edit-q" style="background:none;border:none;color:#6b7280;cursor:pointer;font-size:11px;padding:2px 6px;margin-left:6px">edit</button>
+        <span class="muted" style="font-size:11px">[${esc(inputType)}${opts ? ` · ${opts.length} opts` : ''}]</span>
+      </div>
+      <div class="bank-q-edit hidden" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+        <input class="eq-text" value="${esc(q.text)}" style="flex:1;min-width:240px"/>
+        <select class="eq-type" style="max-width:140px">
+          ${["number","text","textarea","select","radio"].map(t => `<option ${t===inputType?'selected':''}>${t}</option>`).join("")}
+        </select>
+        <input class="eq-options" placeholder="opts (comma-sep)" value="${esc(opts?opts.join(", "):'')}" style="flex:1;min-width:200px"/>
+        <button class="eq-save secondary">Save</button>
+        <button class="eq-cancel ghost" style="background:none;border:none;cursor:pointer;color:#6b7280">cancel</button>
+      </div>
+      <div class="bank-input-wrap" style="margin-top:2px">${inputHtml}</div>
+    </div>
+    <button class="secondary save-bank" data-qid="${q.id}" data-aid="${def?.id || ''}">Save</button>
+    <button class="danger del-bank" data-qid="${q.id}" title="Delete question" style="padding:6px 8px">×</button>
+  </div>`;
+}
+
+function renderAnswerInput(qid, inputType, opts, value){
+  if (inputType === "select" || (opts && opts.length && inputType === "select")) {
+    return `<select data-qid="${qid}" class="bank-input">
+      <option value="">— pick —</option>
+      ${(opts||[]).map(o => `<option ${o===value?'selected':''}>${esc(o)}</option>`).join("")}
+    </select>`;
+  }
+  if (inputType === "radio" && opts && opts.length) {
+    return `<div data-qid="${qid}" class="bank-input" style="display:flex;gap:10px;flex-wrap:wrap">
+      ${opts.map((o,i) => `<label style="display:flex;gap:4px;align-items:center;font-size:12px">
+        <input type="radio" name="r_${qid}" value="${esc(o)}" ${o===value?'checked':''}/>${esc(o)}</label>`).join("")}
+    </div>`;
+  }
+  if (inputType === "number") {
+    return `<input data-qid="${qid}" class="bank-input" type="number" min="0" max="99" value="${esc(value)}" placeholder="enter a number…" style="max-width:140px"/>`;
+  }
+  if (inputType === "textarea") {
+    return `<textarea data-qid="${qid}" class="bank-input" rows="3" placeholder="(your answer)">${esc(value)}</textarea>`;
+  }
+  return `<input data-qid="${qid}" class="bank-input" type="text" value="${esc(value)}" placeholder="(your answer)"/>`;
+}
+
+function wireBankRows(){
+  $all(".save-bank").forEach(b => b.addEventListener("click", async () => {
+    const qid = b.dataset.qid; const aid = b.dataset.aid;
+    const row = b.parentElement;
+    const input = row.querySelector(".bank-input");
+    let val;
+    if (input.tagName === "DIV") {
+      // radio group
+      const picked = input.querySelector("input[type=radio]:checked");
+      val = picked?.value || "";
+    } else {
+      val = input.value;
+    }
+    if (!val) { b.textContent = "empty"; setTimeout(()=>b.textContent="Save", 1200); return; }
+    if (aid) {
+      await API.patch(`/questions/answers/${aid}`, { answer: val, is_default: true });
+    } else {
+      await API.post(`/questions/by-id/${qid}/answers`, { answer: val, is_default: true });
+    }
+    b.textContent = "saved ✓"; setTimeout(loadAnswerBank, 500);
+  }));
+
+  $all(".del-bank").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Delete this question and its saved answers?")) return;
+    await API.del(`/questions/by-id/${b.dataset.qid}`);
+    loadAnswerBank();
+  }));
+
+  $all(".edit-q").forEach(b => b.addEventListener("click", () => {
+    const row = b.closest(".bank-row");
+    row.querySelector(".bank-q-view").classList.add("hidden");
+    row.querySelector(".bank-q-edit").classList.remove("hidden");
+  }));
+
+  $all(".eq-cancel").forEach(b => b.addEventListener("click", () => {
+    const row = b.closest(".bank-row");
+    row.querySelector(".bank-q-view").classList.remove("hidden");
+    row.querySelector(".bank-q-edit").classList.add("hidden");
+  }));
+
+  $all(".eq-save").forEach(b => b.addEventListener("click", async () => {
+    const row = b.closest(".bank-row");
+    const qid = row.dataset.qid;
+    const text = row.querySelector(".eq-text").value.trim();
+    const input_type = row.querySelector(".eq-type").value;
+    const optsRaw = row.querySelector(".eq-options").value.trim();
+    const options = optsRaw ? optsRaw.split(",").map(o => o.trim()).filter(Boolean) : null;
+    if (!text) return;
+    await API.patch(`/questions/by-id/${qid}`, { text, input_type, options });
+    loadAnswerBank();
+  }));
+}
+
+/* ----- Search + filter ----- */
+$("#bank-search")?.addEventListener("input", renderBank);
+$("#bank-cat-filter")?.addEventListener("change", renderBank);
+
+/* ----- Custom question form ----- */
+function renderCustomAnswerInput(){
+  const t = $("#ct-type").value;
+  const optsWrap = $("#ct-options-wrap");
+  const optsRaw = optsWrap.querySelector("input")?.value || "";
+  const opts = optsRaw.split(",").map(o => o.trim()).filter(Boolean);
+  const needOpts = (t === "select" || t === "radio");
+  optsWrap.style.display = needOpts ? "block" : "none";
+  const ansWrap = $("#ct-answer-wrap");
+  if (t === "number") ansWrap.innerHTML = '<input id="ct-answer" type="number" min="0" max="99" placeholder="years / score"/>';
+  else if (t === "textarea") ansWrap.innerHTML = '<textarea id="ct-answer" rows="3" placeholder="(your answer)"></textarea>';
+  else if (needOpts && opts.length) ansWrap.innerHTML = `<select id="ct-answer"><option value="">— pick —</option>${opts.map(o=>`<option>${esc(o)}</option>`).join("")}</select>`;
+  else ansWrap.innerHTML = '<input id="ct-answer" type="text" placeholder="(your answer)"/>';
+}
+$("#ct-type")?.addEventListener("change", renderCustomAnswerInput);
+document.addEventListener("DOMContentLoaded", () => renderCustomAnswerInput());
+
+document.addEventListener("input", (e) => {
+  if (e.target?.closest("#ct-options-wrap")) renderCustomAnswerInput();
+});
+
+$("#custom-q-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const text = fd.get("text"); if (!text) return;
+  const category = fd.get("category");
+  const input_type = fd.get("input_type");
+  const optsRaw = fd.get("options") || "";
+  const options = optsRaw.split(",").map(o => o.trim()).filter(Boolean);
+  $("#custom-status").textContent = "Creating…";
+  try {
+    const r = await API.post("/questions/custom", { text, category, input_type, options: options.length ? options : null });
+    // Save the answer too if user filled one in
+    const answer = $("#ct-answer")?.value;
+    if (answer) await API.post(`/questions/by-id/${r.id}/answers`, { answer, is_default: true });
+    $("#custom-status").textContent = "Added ✓";
+    e.target.reset();
+    renderCustomAnswerInput();
+    loadAnswerBank();
+  } catch (err) {
+    $("#custom-status").textContent = "Error: " + err.message;
+  }
+});
+
+$("#seed-bank-btn")?.addEventListener("click", async () => {
+  $("#seed-status").textContent = "Loading…";
+  const r = await API.post("/questions/seed-bank", {});
+  $("#seed-status").textContent = `Added ${r.added} new (${r.total_seeded} total).`;
+  loadAnswerBank();
+});
+
+document.querySelectorAll(".sidebar a").forEach(a => a.addEventListener("click", () => {
+  if (a.dataset.tab === "answers") loadAnswerBank();
 }));

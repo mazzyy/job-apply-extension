@@ -244,3 +244,41 @@ JSON schema:
         if not data.get("explanation"):
             data["needs_review"] = True
     return data
+
+
+def lookup_default_answer(db, question_text: str, input_type: str | None = None) -> dict | None:
+    """Check the library for an existing default answer to this question (or close paraphrase).
+    If found, returns {"value", "explanation", "confidence", "needs_review"=False, "source":"library"}.
+    Returns None if no good match — caller should fall back to LLM."""
+    from ..models import Question, QuestionAnswer
+    from ..services.question_matcher import similarity, normalize
+    norm = normalize(question_text)
+    # 1. Exact-normalized match
+    q = db.query(Question).filter(Question.normalized == norm).first()
+    # 2. Fuzzy match — only confident ones
+    if not q:
+        candidates = db.query(Question).all()
+        best = None; best_score = 0.0
+        for c in candidates:
+            sc = similarity(question_text, c.text)
+            if sc > best_score:
+                best = c; best_score = sc
+        if best_score >= 0.65:
+            q = best
+    if not q:
+        return None
+    default = (
+        db.query(QuestionAnswer)
+        .filter(QuestionAnswer.question_id == q.id, QuestionAnswer.is_default == 1)
+        .first()
+    )
+    if not default:
+        return None
+    return {
+        "value": default.answer,
+        "explanation": f"From your saved answer to: \"{q.text[:80]}\"",
+        "confidence": 0.95,
+        "needs_review": False,
+        "source": "library",
+        "question_id": q.id,
+    }

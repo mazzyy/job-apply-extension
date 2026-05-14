@@ -9,7 +9,8 @@ from ..database import get_db
 from ..models import Question, QuestionAnswer, CV, Profile, Application, ApplicationEvent
 from ..services.question_matcher import normalize, similarity, classify
 from ..services.analyzer import answer_application_question
-from ..services.typed_answer import answer_for_form
+from ..services.typed_answer import answer_for_form, lookup_default_answer
+from ..services.answer_bank import SEED_QUESTIONS
 
 router = APIRouter(prefix="/questions", tags=["questions"])
 
@@ -50,6 +51,10 @@ def _q_to_dict(q: Question, db: Session) -> dict:
     return {
         "id": q.id, "text": q.text, "category": q.category, "tags": q.tags,
         "use_count": q.use_count,
+        "needs_review": bool(q.needs_review or 0),
+        "last_input_type": q.last_input_type,
+        "last_max_length": q.last_max_length,
+        "last_options": q.last_options,
         "created_at": q.created_at.isoformat(),
         "last_used_at": q.last_used_at.isoformat(),
         "answers": [_a_to_dict(a) for a in answers],
@@ -95,14 +100,14 @@ def create_question(body: QuestionIn, db: Session = Depends(get_db)):
     return _q_to_dict(q, db)
 
 
-@router.get("/{qid}")
+@router.get("/by-id/{qid}")
 def get_question(qid: int, db: Session = Depends(get_db)):
     q = db.query(Question).filter(Question.id == qid).first()
     if not q: raise HTTPException(404, "Not found")
     return _q_to_dict(q, db)
 
 
-@router.delete("/{qid}")
+@router.delete("/by-id/{qid}")
 def delete_question(qid: int, db: Session = Depends(get_db)):
     q = db.query(Question).filter(Question.id == qid).first()
     if not q: raise HTTPException(404, "Not found")
@@ -111,7 +116,7 @@ def delete_question(qid: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-@router.post("/{qid}/answers")
+@router.post("/by-id/{qid}/answers")
 def add_answer(qid: int, body: AnswerIn, db: Session = Depends(get_db)):
     q = db.query(Question).filter(Question.id == qid).first()
     if not q: raise HTTPException(404, "Question not found")
@@ -287,6 +292,20 @@ def answer_for_form_route(body: FormAnswerRequest, db: Session = Depends(get_db)
         if a:
             job_context = f"\nJOB CONTEXT: Role {a.job_title} at {a.company}. JD snippet: {(a.job_description or '')[:1000]}\n"
 
+    # FIRST: check the curated answer bank. If the user has pre-answered this question
+    # (or a close paraphrase), use that directly — no LLM call, no needs_review.
+    bank_hit = lookup_default_answer(db, body.text, input_type=body.input_type)
+    if bank_hit:
+        return {
+            "value": bank_hit["value"],
+            "explanation": bank_hit["explanation"],
+            "confidence": bank_hit["confidence"],
+            "needs_review": False,
+            "source": "library",
+            "question_id": bank_hit.get("question_id"),
+            "answer_id": None,
+        }
+
     typed = answer_for_form(
         question=body.text,
         cv_text=cv.raw_text,
@@ -341,11 +360,117 @@ def list_needs_review(db: Session = Depends(get_db)):
     return [_q_to_dict(q, db) for q in rows]
 
 
-@router.post("/{qid}/mark-reviewed")
+@router.post("/by-id/{qid}/mark-reviewed")
 def mark_reviewed(qid: int, db: Session = Depends(get_db)):
     q = db.query(Question).filter(Question.id == qid).first()
     if not q: raise HTTPException(404, "Not found")
     q.needs_review = 0
     db.commit()
     return {"ok": True}
+
+
+class SeedRequest(BaseModel):
+    reset: bool = False
+
+
+@router.post("/seed-bank")
+def seed_bank(body: SeedRequest = SeedRequest(), db: Session = Depends(get_db)):
+    """Idempotently populate the question library with common application questions.
+    User then opens the dashboard and fills in their answers — those become defaults
+    used by Easy Apply / autofill forever after."""
+    added = 0
+    for text, category, input_type, options in SEED_QUESTIONS:
+        norm = normalize(text)
+        existing = db.query(Question).filter(Question.normalized == norm).first()
+        if existing:
+            # Update metadata only — don't touch user's answers
+            existing.category = existing.category or category
+            existing.last_input_type = existing.last_input_type or input_type
+            if options and not existing.last_options:
+                existing.last_options = json.dumps(options)
+            continue
+        q = Question(
+            text=text, normalized=norm, category=category,
+            last_input_type=input_type,
+            last_options=json.dumps(options) if options else None,
+            needs_review=0,
+        )
+        db.add(q)
+        added += 1
+    db.commit()
+    return {"added": added, "total_seeded": len(SEED_QUESTIONS)}
+
+
+@router.get("/unanswered")
+def list_unanswered(db: Session = Depends(get_db)):
+    """Seeded questions that the user hasn't answered yet — the curated bank UI."""
+    rows = db.query(Question).order_by(Question.category, Question.text).all()
+    out = []
+    for q in rows:
+        answers = db.query(QuestionAnswer).filter(QuestionAnswer.question_id == q.id).all()
+        has_default = any(a.is_default for a in answers)
+        if has_default:
+            continue
+        out.append({
+            **{k: v for k, v in _q_to_dict(q, db).items()},
+            "has_default": False,
+        })
+    return out
+
+class QuestionUpdate(BaseModel):
+    text: str | None = None
+    category: str | None = None
+    tags: str | None = None
+    input_type: str | None = None        # number | text | textarea | select | radio
+    options: list[str] | None = None     # for select/radio
+    min_value: int | None = None         # for number
+    max_value: int | None = None
+
+
+@router.patch("/by-id/{qid}")
+def update_question(qid: int, body: QuestionUpdate, db: Session = Depends(get_db)):
+    q = db.query(Question).filter(Question.id == qid).first()
+    if not q:
+        raise HTTPException(404, "Not found")
+    data = body.model_dump(exclude_unset=True)
+    if "text" in data and data["text"]:
+        q.text = data["text"].strip()
+        q.normalized = normalize(q.text)
+    if "category" in data:
+        q.category = data["category"]
+    if "tags" in data:
+        q.tags = data["tags"]
+    if "input_type" in data:
+        q.last_input_type = data["input_type"]
+    if "options" in data:
+        q.last_options = json.dumps(data["options"]) if data["options"] else None
+    db.commit(); db.refresh(q)
+    return _q_to_dict(q, db)
+
+
+@router.post("/custom")
+def create_custom_question(body: QuestionUpdate, db: Session = Depends(get_db)):
+    """Create a brand-new question with any input type + options."""
+    if not body.text:
+        raise HTTPException(400, "text required")
+    norm = normalize(body.text)
+    existing = db.query(Question).filter(Question.normalized == norm).first()
+    if existing:
+        # Just update its metadata if it already exists
+        if body.input_type: existing.last_input_type = body.input_type
+        if body.options is not None: existing.last_options = json.dumps(body.options) if body.options else None
+        if body.category: existing.category = body.category
+        if body.tags: existing.tags = body.tags
+        db.commit(); db.refresh(existing)
+        return _q_to_dict(existing, db)
+    q = Question(
+        text=body.text.strip(), normalized=norm,
+        category=body.category or classify(body.text),
+        tags=body.tags,
+        last_input_type=body.input_type or "text",
+        last_options=json.dumps(body.options) if body.options else None,
+        needs_review=0,
+    )
+    db.add(q); db.commit(); db.refresh(q)
+    return _q_to_dict(q, db)
 

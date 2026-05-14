@@ -321,7 +321,8 @@ $("#easyapply-btn")?.addEventListener("click", async () => {
     const r = result || {};
     if (r.error) { setStatus(status, r.error, "err"); return; }
     if (r.stopped === "review_ready") {
-      setStatus(status, `Filled ${r.filled} fields across ${r.steps} steps. Review and click Submit on LinkedIn.`, "ok");
+      setStatus(status, `Filled ${r.filled} fields across ${r.steps} steps. Review answers below + on LinkedIn, then Submit.`, "ok");
+      renderEasyApplyAnswers(r.answered || []);
     } else if (r.stopped === "required_field_blank") {
       setStatus(status, `Stopped at a step with required blank fields (highlighted). Fill them and click Next.`, "warn");
     } else {
@@ -331,3 +332,24 @@ $("#easyapply-btn")?.addEventListener("click", async () => {
     setStatus(status, "Error: " + e.message, "err");
   }
 });
+
+
+function renderEasyApplyAnswers(items){
+  if (!items.length) return;
+  const card = document.createElement("section");
+  card.className = "card";
+  card.id = "easyapply-log";
+  card.innerHTML = `
+    <div class="card-header"><span class="card-title">Answers I filled</span>
+      <button class="btn ghost small" id="ea-close">✕</button></div>
+    <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px">
+      ${items.map(it => `
+        <li style="border-left:3px solid ${it.needs_review ? '#d97706' : '#16a34a'};
+                   padding:6px 10px;background:var(--bg-subtle);border-radius:8px;font-size:12px;">
+          <div style="font-weight:600">${esc(it.label)}</div>
+          <div>→ <b>${esc(String(it.value))}</b>${it.needs_review ? ' <span class="pill warn">needs review</span>' : ''}</div>
+        </li>`).join("")}
+    </ul>`;
+  document.querySelector("#letter-card")?.before(card);
+  document.getElementById("ea-close")?.addEventListener("click", () => card.remove());
+}

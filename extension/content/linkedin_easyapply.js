@@ -552,6 +552,7 @@
       const fr = await fillTextInputs(modal, ctx);
       result.filled += fr.filled;
       result.api_errors += (fr.api_errors || 0);
+      result.answered = (result.answered || []).concat(fr.answered || []);
       // Fill radio groups
       const rfilled = await fillRadioGroups(modal, ctx);
       result.filled += rfilled;
