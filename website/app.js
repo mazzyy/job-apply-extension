@@ -453,3 +453,58 @@ document.querySelectorAll(".sidebar a").forEach(a => a.addEventListener("click",
   if (a.dataset.tab === "analytics") loadAnalytics();
   if (a.dataset.tab === "questions") loadQuestions();
 }));
+
+/* ============================== Pending review queue ============================== */
+async function loadNeedsReview(){
+  const rows = await API.get("/questions/needs-review").catch(()=>[]);
+  const card = $("#needs-review-card");
+  const list = $("#needs-review-list");
+  if (!card || !list) return;
+  if (!rows.length) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+  list.innerHTML = rows.map(q => {
+    const ans = q.answers[q.answers.length - 1];  // most recent
+    return `
+      <div class="q-card" data-qid="${q.id}" style="background:#fffefa;border-color:#fde68a">
+        <div class="q-text">${esc(q.text)}</div>
+        <div class="q-meta">type: <b>${esc(q.last_input_type || "text")}</b>${q.last_options ? ` · options: ${esc(q.last_options)}` : ""}</div>
+        <textarea class="nr-answer" rows="3" style="margin-top:8px">${esc(ans?.answer || "")}</textarea>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <button class="nr-save">Save as default & mark reviewed</button>
+          <button class="secondary nr-skip">Mark reviewed (keep as-is)</button>
+          <button class="danger nr-delete">Delete question</button>
+        </div>
+      </div>`;
+  }).join("");
+
+  $all("#needs-review-list .q-card").forEach(card => {
+    const qid = +card.dataset.qid;
+    const ta = card.querySelector(".nr-answer");
+    card.querySelector(".nr-save").addEventListener("click", async () => {
+      // Add the edited answer as default and mark reviewed
+      const row = rows.find(r => r.id === qid);
+      const ans = row?.answers?.[row.answers.length - 1];
+      if (ans) {
+        await API.patch(`/questions/answers/${ans.id}`, { answer: ta.value, is_default: true });
+      } else {
+        await API.post(`/questions/${qid}/answers`, { answer: ta.value, is_default: true });
+      }
+      await API.post(`/questions/${qid}/mark-reviewed`, {});
+      loadNeedsReview(); loadQuestions();
+    });
+    card.querySelector(".nr-skip").addEventListener("click", async () => {
+      await API.post(`/questions/${qid}/mark-reviewed`, {});
+      loadNeedsReview(); loadQuestions();
+    });
+    card.querySelector(".nr-delete").addEventListener("click", async () => {
+      if (!confirm("Delete this question entirely?")) return;
+      await API.del(`/questions/${qid}`);
+      loadNeedsReview(); loadQuestions();
+    });
+  });
+}
+
+// Hook into tab change
+document.querySelectorAll(".sidebar a").forEach(a => a.addEventListener("click", async () => {
+  if (a.dataset.tab === "questions") loadNeedsReview();
+}));

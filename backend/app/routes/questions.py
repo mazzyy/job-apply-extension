@@ -9,6 +9,7 @@ from ..database import get_db
 from ..models import Question, QuestionAnswer, CV, Profile, Application, ApplicationEvent
 from ..services.question_matcher import normalize, similarity, classify
 from ..services.analyzer import answer_application_question
+from ..services.typed_answer import answer_for_form
 
 router = APIRouter(prefix="/questions", tags=["questions"])
 
@@ -243,3 +244,108 @@ def record_use(aid: int, db: Session = Depends(get_db)):
         q.last_used_at = datetime.utcnow()
     db.commit()
     return {"ok": True}
+
+class FormAnswerRequest(BaseModel):
+    text: str
+    input_type: str = "text"           # number | text | textarea | select | radio
+    max_length: int | None = None
+    options: list[str] | None = None   # for select/radio
+    application_id: int | None = None
+    cv_id: int | None = None
+    save: bool = True                  # always save the question so user can review
+
+
+@router.post("/answer-for-form")
+def answer_for_form_route(body: FormAnswerRequest, db: Session = Depends(get_db)):
+    """Generate a shape-correct answer for one form field and always log the question.
+    The question is saved with needs_review=true so the user can review/edit it in the dashboard."""
+    cv = None
+    if body.cv_id:
+        cv = db.query(CV).filter(CV.id == body.cv_id).first()
+    if not cv:
+        cv = db.query(CV).filter(CV.is_active == True).first()  # noqa: E712
+    if not cv:
+        cv = db.query(CV).order_by(desc(CV.created_at)).first()
+    if not cv:
+        raise HTTPException(400, "No CV uploaded")
+
+    prof = db.query(Profile).first()
+    profile_json = "{}"
+    if prof:
+        profile_json = json.dumps({
+            "full_name": prof.full_name, "email": prof.email,
+            "current_title": prof.current_title,
+            "current_company": prof.current_company,
+            "years_experience": prof.years_experience,
+            "city": prof.city, "country": prof.country,
+            "languages": json.loads(prof.languages) if prof.languages else [],
+        }, ensure_ascii=False)
+
+    job_context = ""
+    if body.application_id:
+        a = db.query(Application).filter(Application.id == body.application_id).first()
+        if a:
+            job_context = f"\nJOB CONTEXT: Role {a.job_title} at {a.company}. JD snippet: {(a.job_description or '')[:1000]}\n"
+
+    typed = answer_for_form(
+        question=body.text,
+        cv_text=cv.raw_text,
+        profile_json=profile_json,
+        input_type=body.input_type,
+        max_length=body.max_length,
+        options=body.options,
+        job_context=job_context,
+    )
+
+    # Save the question regardless — user reviews later
+    saved_qid = None
+    saved_aid = None
+    if body.save:
+        norm = normalize(body.text)
+        q = db.query(Question).filter(Question.normalized == norm).first()
+        if not q:
+            q = Question(text=body.text.strip(), normalized=norm, category=classify(body.text))
+            db.add(q); db.flush()
+        q.needs_review = 1 if typed.get("needs_review", False) else (q.needs_review or 0)
+        q.last_input_type = body.input_type
+        q.last_max_length = body.max_length
+        q.last_options = json.dumps(body.options) if body.options else None
+        q.use_count = (q.use_count or 0) + 1
+        q.last_used_at = datetime.utcnow()
+
+        # Always store the rendered answer so user can edit it
+        a = QuestionAnswer(
+            question_id=q.id,
+            answer=str(typed.get("value", "")),
+            is_default=0,
+            application_id=body.application_id,
+            use_count=1,
+        )
+        db.add(a); db.commit(); db.refresh(a)
+        saved_qid = q.id; saved_aid = a.id
+
+    return {
+        "value": typed.get("value"),
+        "explanation": typed.get("explanation"),
+        "confidence": typed.get("confidence"),
+        "needs_review": typed.get("needs_review", False),
+        "question_id": saved_qid,
+        "answer_id": saved_aid,
+    }
+
+
+@router.get("/needs-review")
+def list_needs_review(db: Session = Depends(get_db)):
+    """Questions that were auto-answered from CV and need user verification."""
+    rows = db.query(Question).filter(Question.needs_review == 1).order_by(desc(Question.last_used_at)).all()
+    return [_q_to_dict(q, db) for q in rows]
+
+
+@router.post("/{qid}/mark-reviewed")
+def mark_reviewed(qid: int, db: Session = Depends(get_db)):
+    q = db.query(Question).filter(Question.id == qid).first()
+    if not q: raise HTTPException(404, "Not found")
+    q.needs_review = 0
+    db.commit()
+    return {"ok": True}
+

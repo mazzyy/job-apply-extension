@@ -115,23 +115,32 @@
     return r?.ok ? r.data : {};
   }
   async function matchQuestion(text) {
+    // Used for radio Yes/No probe — looks up previous default answer
     const r = await chrome.runtime.sendMessage({
       type: "API_POST", path: "/questions/match",
       body: { text, top_k: 1, min_score: 0.30 },
     });
     if (r?.ok && r.data.matches?.length) {
       const m = r.data.matches[0];
-      const a = (m.answers || [])[0];
+      const a = (m.answers || []).find(x => x.is_default) || (m.answers || [])[0];
       return a?.answer || null;
     }
     return null;
   }
-  async function draftQuestion(text, applicationId) {
+  async function typedAnswer({ text, inputType, maxLength, options, applicationId }) {
     const r = await chrome.runtime.sendMessage({
-      type: "API_POST", path: "/questions/draft",
-      body: { text, application_id: applicationId, save: true },
+      type: "API_POST", path: "/questions/answer-for-form",
+      body: {
+        text, input_type: inputType, max_length: maxLength,
+        options: options || null,
+        application_id: applicationId, save: true,
+      },
     });
-    return r?.ok ? r.data.answer : null;
+    if (!r?.ok) {
+      console.error("[JAA/easyapply] typedAnswer API error:", r?.error);
+      return null;
+    }
+    return r.data;
   }
 
   /* ------------ Profile → field heuristics ------------ */
@@ -227,39 +236,146 @@
   }
 
   /* ------------ Field fillers ------------ */
-  async function fillTextInputs(modal, ctx) {
-    const inputs = $all("input, textarea", modal).filter(visible);
-    const ttSelects = $all("select", modal).filter(visible);
-    const results = { filled: 0, missing: [], required_blank: [] };
+  function detectInputType(el) {
+    // v0.6.1 — robust numeric detection across LinkedIn DOM variants
+    if (el.tagName === "TEXTAREA") return "textarea";
+    if (el.tagName === "SELECT") return "select";
+    const t = (el.type || "").toLowerCase();
+    if (t === "number") return "number";
+    if (t === "tel") return "text";
 
-    for (const el of [...inputs, ...ttSelects]) {
-      if (el.disabled || el.readOnly) continue;
-      if (el.type === "hidden" || el.type === "file") continue;
+    // 1. The QUESTION LABEL is the most reliable signal — "Wie viele Jahre" etc. always = number
+    const labelTxt = (labelOf(el) || "").toLowerCase();
+    if (/(wie viele jahre|how many years|years?\s+of\s+experience|jahre\s+erfahrung)/i.test(labelTxt)) {
+      return "number";
+    }
+    if (/(rate yourself|skala von|scale of|out of \d+|von 1 bis \d+|from 1 to \d+|on a scale)/i.test(labelTxt)) {
+      return "number";
+    }
+
+    // 2. Walk up to 6 ancestors looking for numeric validation copy ANYWHERE inside
+    let node = el;
+    for (let i = 0; i < 6 && node; i++) {
+      const txt = (node.innerText || node.textContent || "").toLowerCase();
+      if (/(whole zahl|ganze zahl|whole number|integer|number between|zahl zwischen|0 und 99|0 and 99|enter a (whole )?number)/i.test(txt)) {
+        return "number";
+      }
+      node = node.parentElement;
+    }
+
+    // 3. Adjacent siblings (validation message often follows the input)
+    const wrap = el.closest(".fb-dash-form-element, .jobs-easy-apply-form-element, fieldset, .artdeco-text-input") || el.parentElement;
+    if (wrap) {
+      const wrapTxt = (wrap.innerText || wrap.textContent || "").toLowerCase();
+      if (/(whole zahl|ganze zahl|whole number|integer|number between|zahl zwischen)/i.test(wrapTxt)) {
+        return "number";
+      }
+    }
+
+    // 4. Pattern attribute that's digit-only
+    const patAttr = el.getAttribute("pattern") || "";
+    if (/\d/.test(patAttr) && !/[a-z]/i.test(patAttr)) return "number";
+
+    // 5. aria-describedby pointing to numeric hint
+    const describedBy = el.getAttribute("aria-describedby") || "";
+    if (describedBy) {
+      const note = document.getElementById(describedBy);
+      if (note && /(whole zahl|ganze zahl|whole number|integer|zahl zwischen)/i.test(note.innerText || "")) {
+        return "number";
+      }
+    }
+
+    return "text";
+  }
+
+  function selectOptionsOf(el) {
+    if (el.tagName !== "SELECT") return null;
+    return Array.from(el.options)
+      .map(o => (o.text || "").trim())
+      .filter(t => t && !/^select(\s+an?\s+option)?$/i.test(t));
+  }
+
+  async function fillTextInputs(modal, ctx) {
+    const inputs = $all("input, textarea, select", modal).filter(visible);
+    const results = { filled: 0, missing: [], required_blank: [], answered: [] };
+
+    for (const el of inputs) {
+      if (el.disabled || el.readOnly) { log("skip disabled/readonly", el); continue; }
+      if (el.type === "hidden" || el.type === "file") { log("skip hidden/file", el.type); continue; }
       if (el.type === "radio" || el.type === "checkbox") continue;
-      if (el.value && el.value.length > 1) continue;     // don't clobber existing
+      // Skip prefilled values — but only if they make sense for the field type.
+      // A previous buggy build may have pasted a long sentence into a numeric field;
+      // clear it so we can refill correctly.
+      if (el.value && el.value.length > 1) {
+        const inputTypePeek = detectInputType(el);
+        const looksBad = (inputTypePeek === "number" && !/^-?\d+(\.\d+)?$/.test(String(el.value).trim()));
+        if (looksBad) {
+          log("clearing bogus prefilled value on numeric field:", labelOf(el), "had:", el.value);
+          const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+          if (setter) setter.call(el, ""); else el.value = "";
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        } else {
+          log("skip prefilled", labelOf(el), "=", el.value);
+          continue;
+        }
+      }
 
       const label = labelOf(el);
-      if (!label) continue;
+      if (!label || label.length < 2) { log("skip no-label", el); continue; }
 
-      // 1. Direct profile match
-      let val = profileLookup(label, ctx.profile);
-      // 2. Question library match
-      if (!val) val = await matchQuestion(label);
-      // 3. AI draft (only for textareas / long inputs — shorter inputs left blank)
-      const isLong = el.tagName === "TEXTAREA" || (el.maxLength === -1 || el.maxLength > 100);
-      if (!val && isLong) {
-        val = await draftQuestion(label, ctx.applicationId);
+      const inputType = detectInputType(el);
+      const options = selectOptionsOf(el);
+      const maxLength = (el.maxLength && el.maxLength > 0) ? el.maxLength : null;
+      log("field detected", { label, inputType, maxLength, options });
+
+      // 1. Direct profile match for plain text/textarea ONLY
+      let val = null;
+      let source = null;
+      if (inputType === "text" || inputType === "textarea") {
+        val = profileLookup(label, ctx.profile);
+        if (val) source = "profile";
+      }
+
+      // 2. Type-aware backend answer
+      if (val === null || val === undefined || val === "") {
+        log("calling /answer-for-form for:", label, "type=", inputType);
+        try {
+          const r = await typedAnswer({
+            text: label, inputType, maxLength, options,
+            applicationId: ctx.applicationId,
+          });
+          log("typed-answer response:", r);
+          if (r && r.value !== null && r.value !== undefined && String(r.value).length > 0) {
+            val = r.value;
+            source = "ai";
+            results.answered.push({ label, value: r.value, needs_review: r.needs_review, qid: r.question_id });
+          } else if (!r) {
+            log("typed-answer FAILED — likely backend error. Check backend logs.");
+            results.api_errors = (results.api_errors || 0) + 1;
+          }
+        } catch (e) {
+          console.error("[JAA/easyapply] typed-answer threw", e);
+          results.api_errors = (results.api_errors || 0) + 1;
+        }
       }
 
       if (val !== null && val !== undefined && String(val).length > 0) {
-        if (setVal(el, val)) results.filled++;
+        const ok = setVal(el, val);
+        if (ok) {
+          results.filled++;
+          log("✓ filled", label, "←", val, `(${source})`);
+        } else {
+          log("✗ setVal failed", label, "value=", val);
+        }
       } else {
-        // Mark required-but-empty for the banner
         const required = el.required || el.getAttribute("aria-required") === "true";
         if (required) results.required_blank.push(label.slice(0, 80));
         else results.missing.push(label.slice(0, 80));
       }
     }
+    log("step fill summary", results);
     return results;
   }
 
@@ -349,7 +465,7 @@
 
   /* ------------ Main driver ------------ */
   window.__jaaRunEasyApply = async function (options = {}) {
-    const result = { steps: 0, filled: 0, blanks: [], stopped: null };
+    const result = { steps: 0, filled: 0, blanks: [], stopped: null, api_errors: 0 };
 
     // 1. Verify we're on a LinkedIn job page
     if (!/linkedin\.com\/jobs/.test(location.href)) {
@@ -435,11 +551,18 @@
       // Fill text inputs + selects
       const fr = await fillTextInputs(modal, ctx);
       result.filled += fr.filled;
+      result.api_errors += (fr.api_errors || 0);
       // Fill radio groups
       const rfilled = await fillRadioGroups(modal, ctx);
       result.filled += rfilled;
       // Track blanks
       if (fr.required_blank.length) result.blanks.push(...fr.required_blank);
+      // If every field on this step failed via API errors, stop with a clear message
+      if ((fr.required_blank.length > 0 || fr.missing.length > 0) && fr.filled === 0 && (fr.api_errors || 0) > 0) {
+        showBanner(modal, "Backend error — none of the fields could be answered. Check the side panel for details and verify the backend is running.", "err");
+        result.stopped = "backend_error";
+        break;
+      }
 
       await wait(300);
 

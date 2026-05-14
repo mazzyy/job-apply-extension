@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from .database import Base, engine
+from .database import Base, engine, ensure_schema
 from .config import settings
 from .routes import cvs, analyze, applications, profile, questions, emails, analytics
 from .services.analyzer import verify_model
@@ -18,6 +18,7 @@ logging.basicConfig(
 log = logging.getLogger("jaa")
 
 Base.metadata.create_all(bind=engine)
+ensure_schema()
 
 
 @asynccontextmanager
