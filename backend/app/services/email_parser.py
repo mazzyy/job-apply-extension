@@ -72,6 +72,7 @@ Be conservative — only set confidence > 0.7 if very clear."""
         ],
         want_json=True,
         max_tokens=900,
+        task="email_classify",
     )
     data = _parse_json_loose(text)
     # Coerce fields

@@ -182,6 +182,7 @@ Requirements:
         ],
         want_json=False,
         max_tokens=1800,
+        task="cover_letter",
     )
     return {"cover_letter": text.strip(), "cv_used": {"id": cv.id, "label": cv.label}}
 

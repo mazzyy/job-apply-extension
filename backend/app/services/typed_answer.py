@@ -191,13 +191,13 @@ JSON schema:
   "confidence": <0.0-1.0>,
   "needs_review": <true if you guessed or extrapolated, false if directly stated in CV/profile>
 }}"""
-    text = _chat(
-        [
+    text = _chat([
             {"role": "system", "content": "You return shape-correct JSON answers to job application form fields. You ground every answer in the CV; if it's not in the CV you mark needs_review=true."},
             {"role": "user", "content": prompt},
         ],
         want_json=True,
         max_tokens=1200,
+        task="typed_answer",
     )
     data = _parse_json_loose(text)
 
