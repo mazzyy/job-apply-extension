@@ -4,6 +4,8 @@ import logging
 import traceback
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from .database import Base, engine, ensure_schema
@@ -92,3 +94,13 @@ app.include_router(questions.router)
 app.include_router(emails.router)
 app.include_router(analytics.router)
 app.include_router(settings_router.router)
+
+# Serve the dashboard alongside the API so the Tauri shell can load it from one origin.
+import os
+_website = settings.WEBSITE_DIR if hasattr(settings, "WEBSITE_DIR") else None
+if _website and os.path.isdir(str(_website)):
+    app.mount("/dashboard", StaticFiles(directory=str(_website), html=True), name="dashboard")
+
+    @app.get("/", include_in_schema=False)
+    def root_redirect():
+        return RedirectResponse(url="/dashboard/")

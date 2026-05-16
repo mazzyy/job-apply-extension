@@ -710,3 +710,83 @@ $("#seed-bank-btn")?.addEventListener("click", async () => {
 document.querySelectorAll(".sidebar a").forEach(a => a.addEventListener("click", () => {
   if (a.dataset.tab === "answers") loadAnswerBank();
 }));
+
+/* ============================== Provider settings ============================== */
+const TASK_LABELS = {
+  "analyze_fit": "Fit analysis",
+  "structure_cv": "CV parsing",
+  "typed_answer": "Easy Apply field",
+  "cover_letter": "Cover letter",
+  "draft_answer": "Draft application answer",
+  "email_classify": "Email classification",
+  "verify_model": "Model verification",
+};
+
+async function loadProviderSettings(){
+  const s = await API.get("/settings/").catch(()=>({}));
+  if (!s) return;
+  const mode = s.llm_provider || "cloud";
+  document.querySelectorAll("input[name=provider]").forEach(r => {
+    r.checked = (r.value === mode);
+  });
+  if ($("#local-model")) $("#local-model").value = s.local_model || "llama3.2:3b";
+  if ($("#local-base-url")) $("#local-base-url").value = s.local_base_url || "http://localhost:11434/v1";
+
+  // Build per-task grid
+  const grid = $("#per-task-grid");
+  if (grid) {
+    const overrides = s.per_task || {};
+    grid.innerHTML = Object.entries(TASK_LABELS).map(([key, label]) => `
+      <label>
+        <span>${esc(label)}</span>
+        <select data-task="${key}">
+          <option value="" ${!overrides[key]?'selected':''}>(default)</option>
+          <option value="cloud" ${overrides[key]==='cloud'?'selected':''}>Cloud</option>
+          <option value="local" ${overrides[key]==='local'?'selected':''}>Local</option>
+        </select>
+      </label>
+    `).join("");
+  }
+  // Show/hide local config based on mode
+  const localCfg = $("#local-config");
+  if (localCfg) localCfg.style.opacity = (mode === "cloud") ? "0.5" : "1";
+}
+
+document.querySelectorAll("input[name=provider]").forEach(r => r.addEventListener("change", () => {
+  const localCfg = $("#local-config");
+  if (localCfg) localCfg.style.opacity = (r.value === "cloud") ? "0.5" : "1";
+}));
+
+$("#save-provider")?.addEventListener("click", async () => {
+  const provider = document.querySelector("input[name=provider]:checked")?.value || "cloud";
+  const local_model = $("#local-model")?.value || "llama3.2:3b";
+  const local_base_url = $("#local-base-url")?.value || "http://localhost:11434/v1";
+  const per_task = {};
+  document.querySelectorAll("#per-task-grid select").forEach(sel => {
+    if (sel.value) per_task[sel.dataset.task] = sel.value;
+  });
+  $("#provider-status").textContent = "Saving…";
+  await API.put("/settings/", { llm_provider: provider, local_model, local_base_url, per_task });
+  $("#provider-status").textContent = "Saved.";
+  setTimeout(() => $("#provider-status").textContent = "", 1800);
+  await checkApi();
+});
+
+$("#test-connection")?.addEventListener("click", async () => {
+  $("#provider-status").textContent = "Pinging deployment…";
+  try {
+    const r = await API.post("/verify-model", {});
+    if (r.ok) {
+      $("#provider-status").innerHTML = `<span style="color:#16a34a">✓ ${esc(r.provider||'?')} · ${esc(r.model||'?')} replied: ${esc(r.reply||'')}</span>`;
+    } else {
+      $("#provider-status").innerHTML = `<span style="color:#b91c1c">✗ ${esc(r.error||'failed')}</span>`;
+    }
+  } catch (e) {
+    $("#provider-status").innerHTML = `<span style="color:#b91c1c">Error: ${esc(e.message)}</span>`;
+  }
+});
+
+// Load when Settings tab activates
+document.querySelectorAll(".sidebar a").forEach(a => a.addEventListener("click", () => {
+  if (a.dataset.tab === "settings") loadProviderSettings();
+}));

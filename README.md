@@ -146,3 +146,34 @@ For each job page the extension sends the JD plus your active CV's parsed text t
 - Cover-letter draft button on the side panel (already supported by `/analyze/answer`)
 - Browser-based DOCX export of tailored CVs
 - Move from SQLite to Postgres + auth when sharing across machines
+
+
+## Optional: Use a local LLM instead of (or alongside) Azure OpenAI
+
+The app supports three LLM modes via the dashboard's Settings tab:
+
+- **Cloud** — uses Azure OpenAI `gpt-5-mini` (default; needs API key in `.env`).
+- **Local** — uses Ollama running on your machine. Free, private, no API costs.
+- **Hybrid** — routes routine tasks (CV parsing, Easy Apply field answers, email classification) to local, and deep-reasoning tasks (fit analysis, cover letter writing) to cloud. Recommended for cost/quality balance.
+
+### Install Ollama
+
+```bash
+# macOS / Linux
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Windows
+winget install Ollama.Ollama
+```
+
+### Pull a model
+
+```bash
+# Default — Llama 3.2 3B, ~2 GB, runs on 8 GB RAM laptops
+ollama pull llama3.2:3b
+
+# Optional — better quality, ~4.4 GB, needs 12 GB RAM
+ollama pull qwen2.5:7b
+```
+
+Then in the dashboard → Settings → pick **Local** or **Hybrid**, click Save, then Test connection. You should see `✓ local · llama3.2:3b replied: PONG`.

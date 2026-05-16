@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Job Apply Assistant",
+  "version": "0.9.0",
+  "identifier": "com.jobapplyassistant.desktop",
+  "build": {
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "bash ./scripts/bundle-resources.sh",
+    "devUrl": null,
+    "frontendDist": "../src"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Job Apply Assistant",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true,
+      "menuOnLeftClick": false
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg", "msi", "nsis", "deb", "appimage"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": ["resources/**/*"],
+    "category": "Productivity",
+    "shortDescription": "Job application assistant with cloud or local AI",
+    "longDescription": "Analyze job fit, autofill applications, draft cover letters, manage your application history — all from one desktop app. Works with Azure OpenAI (gpt-5-mini) or fully on-device with Ollama."
+  }
+}

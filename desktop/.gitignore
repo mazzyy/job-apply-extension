@@ -1,0 +1,20 @@
+# Tauri build outputs
+src-tauri/target/
+src-tauri/gen/
+src-tauri/resources/backend/
+src-tauri/resources/ollama/
+
+# Node
+node_modules/
+.tauri/
+
+# Built installers
+release/
+*.dmg
+*.msi
+*.deb
+*.AppImage
+*.app
+
+# Editor
+.DS_Store

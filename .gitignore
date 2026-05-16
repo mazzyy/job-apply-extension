@@ -71,3 +71,7 @@ extension/build/
 extension/*.zip
 extension/*.crx
 extension/*.pem
+backend/build/
+backend/dist/
+backend/run.spec.tmp
+*.spec.tmp

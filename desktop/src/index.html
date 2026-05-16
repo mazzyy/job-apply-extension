@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Job Apply Assistant</title>
+<link rel="stylesheet" href="shell.css" />
+</head>
+<body>
+  <div class="splash" id="splash">
+    <div class="brand">
+      <div class="logo">J</div>
+      <h1>Job Apply Assistant</h1>
+    </div>
+    <div class="status" id="status">
+      <div class="spinner"></div>
+      <div class="message" id="message">Starting backend…</div>
+    </div>
+    <div class="hint muted">First launch may take 5–10 seconds while we initialize the database.</div>
+    <div id="error-panel" class="hidden">
+      <div class="error-title">Could not start backend</div>
+      <pre class="error-detail" id="error-detail"></pre>
+      <button id="retry">Retry</button>
+    </div>
+  </div>
+  <script type="module" src="shell.js"></script>
+</body>
+</html>
