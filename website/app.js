@@ -2,7 +2,14 @@ const $ = s => document.querySelector(s);
 const $all = s => Array.from(document.querySelectorAll(s));
 
 const API = {
-  get base(){ return localStorage.getItem("apiBase") || "http://localhost:8000"; },
+  get base(){
+    // When the dashboard is served from FastAPI (Tauri or localhost:8000/dashboard),
+    // use the same origin — works regardless of port. Fall back to localStorage
+    // override or the default 8000 when opened as a file:// or different origin.
+    const fromLocation = (typeof window !== "undefined" && window.location && window.location.protocol.startsWith("http"))
+      ? window.location.origin : null;
+    return localStorage.getItem("apiBase") || fromLocation || "http://localhost:8000";
+  },
   async get(path){ const r = await fetch(this.base+path); if(!r.ok) throw new Error(await r.text()); return r.json(); },
   async post(path, body){
     const r = await fetch(this.base+path, { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });

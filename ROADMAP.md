@@ -135,16 +135,16 @@ Deliverables:
 
 Definition of done: A first-time user can complete setup in under 5 minutes with no terminal use.
 
-### Phase 5 — macOS + Windows installers (~1 day)
+### Phase 5 — macOS + Windows installers (READY — your turn to build)
 Produce real installers, not dev builds.
 
 Deliverables:
-- [ ] `desktop/tauri.conf.json` configured with bundle settings (identifier `com.jobapplyassistant.app`, version, icons, file associations none)
-- [ ] Icon set: 16/32/64/128/256/512 px PNG + ICO for Windows + ICNS for Mac
-- [ ] Bundling step that copies the PyInstaller output into `desktop/src-tauri/resources/`
-- [ ] Bundling step that copies the Ollama binary for each target into resources
-- [ ] `npm run tauri build` produces `.dmg` on Mac and `.msi` on Windows
-- [ ] **Manual test**: install the .dmg on a second Mac, install the .msi on a Windows VM, verify both launch and complete onboarding
+- [x] `desktop/tauri.conf.json` configured with bundle settings (identifier `com.jobapplyassistant.app`, version, icons, file associations none)
+- [ ] Replace placeholder icons with real ones via `npx @tauri-apps/cli icon path/to/source.png`
+- [x] Bundling step that copies the PyInstaller output into `desktop/src-tauri/resources/`
+- [x] Bundling step copies Ollama if BUNDLE_OLLAMA=1 is set
+- [ ] **Build (you do this on each OS):** `cd backend && bash build.sh` → `cd ../desktop && npm run build`. See PHASE5-BUILD.md.
+- [ ] **Manual test (you do this):** install the .dmg on a second Mac, install the .msi on a Windows VM
 
 Definition of done: a friend can download the installer, double-click, and use the app.
 
