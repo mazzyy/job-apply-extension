@@ -110,14 +110,162 @@ dialog::backdrop { background: rgba(15,23,42,.55); }
 .timeline .ev .ev-when { font-size:11px; color:#94a3b8; margin-top:2px; }
 
 /* --- Provider settings --- */
-.prov-radio { display:flex;gap:8px;align-items:flex-start;cursor:pointer;
-  padding:10px 14px;border:1px solid #e5e7eb;border-radius:10px;
-  background:#fff;flex:1;min-width:160px;
-  transition:border-color .15s,background .15s; }
-.prov-radio:hover { border-color:#a5b4fc; }
-.prov-radio input { margin-top:2px; }
-.prov-radio:has(input:checked) { border-color:#4f46e5;background:#eef2ff; }
-.prov-radio .muted { font-size:11px; }
-#per-task-grid label { font-size:12px;display:flex;justify-content:space-between;
-  align-items:center;gap:8px;padding:4px 0; }
-#per-task-grid select { padding:4px 6px;font-size:12px; }
+#provider-radios {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0 10px;
+}
+@media (max-width: 720px) {
+  #provider-radios { grid-template-columns: 1fr; }
+}
+.prov-card {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  cursor: pointer;
+  padding: 12px 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fff;
+  min-width: 0;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+  user-select: none;
+}
+.prov-card:hover {
+  border-color: #a5b4fc;
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.08);
+}
+.prov-card input[type="radio"] {
+  margin: 2px 0 0 0;
+  width: 16px; height: 16px;
+  flex-shrink: 0;
+  accent-color: #4f46e5;
+}
+.prov-card:has(input:checked) {
+  border-color: #4f46e5;
+  background: #eef2ff;
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.12);
+}
+.prov-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.prov-card-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: #111;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.prov-card-sub {
+  font-size: 11.5px;
+  color: #64748b;
+  line-height: 1.4;
+}
+.prov-badge {
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+#per-task-grid label {
+  font-size: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+#per-task-grid select {
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+/* --- Timeframe cards on Overview --- */
+.timeframe-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+@media (max-width: 900px) {
+  .timeframe-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.tf-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.tf-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+.tf-stats {
+  display: flex;
+  gap: 16px;
+}
+.tf-stats > div {
+  display: flex;
+  flex-direction: column;
+}
+.tf-stats span {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #0f172a;
+  line-height: 1;
+}
+.tf-stats label {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+/* --- LLM usage card layout --- */
+.usage-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+@media (max-width: 900px) {
+  .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.usage-kpi {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.usage-kpi .num {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.usage-kpi .lab {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.usage-kpi.cost .num { color: #dc2626; }
+.usage-kpi.tokens .num { color: #4f46e5; }
+.usage-kpi.local-savings .num { color: #16a34a; }

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from ..database import get_db
-from ..models import Application, ApplicationEvent, CV
+from ..models import Application, ApplicationEvent, CV, LLMUsage
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -135,13 +135,32 @@ def overview(db: Session = Depends(get_db)):
                 by_language[lang.strip()] += 1
 
     # Activity over last 30 days (per day count)
-    cutoff = datetime.utcnow() - timedelta(days=30)
+    now = datetime.utcnow()
+    cutoff = now - timedelta(days=30)
     daily = Counter()
     for a in rows:
         if a.created_at and a.created_at >= cutoff:
             d = a.created_at.date().isoformat()
             daily[d] += 1
     daily_activity = [{"date": d, "count": c} for d, c in sorted(daily.items())]
+
+    # Today / week / month rollups (also broken down by status)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = today_start - timedelta(days=now.weekday())   # Monday
+    month_start = today_start.replace(day=1)
+
+    def rollup(predicate):
+        sub = [a for a in rows if a.created_at and predicate(a.created_at)]
+        return {
+            "analyzed": len(sub),
+            "applied": sum(1 for a in sub if (a.status or "") in {"applied", "interview", "offer", "rejected"}),
+            "interview": sum(1 for a in sub if (a.status or "") in {"interview", "offer"}),
+            "offer": sum(1 for a in sub if (a.status or "") == "offer"),
+        }
+    today_rollup = rollup(lambda d: d >= today_start)
+    week_rollup = rollup(lambda d: d >= week_start)
+    month_rollup = rollup(lambda d: d >= month_start)
+    yesterday_rollup = rollup(lambda d: today_start - timedelta(days=1) <= d < today_start)
 
     return {
         "totals": {"total": total, **by_status},
@@ -154,6 +173,10 @@ def overview(db: Session = Depends(get_db)):
         "source_effectiveness": source_effectiveness,
         "language_demand": {"non_english_total": non_english_count, "by_language": dict(by_language)},
         "daily_activity": daily_activity,
+        "today": today_rollup,
+        "yesterday": yesterday_rollup,
+        "week": week_rollup,
+        "month": month_rollup,
     }
 
 
@@ -180,3 +203,99 @@ def insights(db: Session = Depends(get_db)):
     if best_cv.get("interview_rate", 0) > 0 and len(o.get("cv_performance", [])) > 1:
         notes.append(f"Your {best_cv['cv_label']} CV has the best interview rate ({best_cv['interview_rate']}%).")
     return {"notes": notes, "as_of": datetime.utcnow().isoformat()}
+
+
+@router.get("/llm-usage")
+def llm_usage(db: Session = Depends(get_db)):
+    """Token/cost/latency breakdown for every LLM call we've made."""
+    rows = db.query(LLMUsage).all()
+    if not rows:
+        return {
+            "total_calls": 0, "total_tokens": 0, "total_cost_usd": 0,
+            "by_task": [], "by_provider": [], "by_model": [], "daily": [],
+            "today": {"calls": 0, "tokens": 0, "cost": 0},
+            "week": {"calls": 0, "tokens": 0, "cost": 0},
+            "month": {"calls": 0, "tokens": 0, "cost": 0},
+            "avg_latency_ms": 0,
+        }
+
+    now = datetime.utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = today_start - timedelta(days=now.weekday())
+    month_start = today_start.replace(day=1)
+
+    total_calls = len(rows)
+    total_tokens = sum(r.total_tokens or 0 for r in rows)
+    total_cost = round(sum(r.estimated_cost_usd or 0 for r in rows), 4)
+    success_calls = sum(1 for r in rows if r.success)
+    avg_latency = int(sum(r.latency_ms or 0 for r in rows) / max(total_calls, 1))
+
+    def bucket_stats(predicate):
+        sub = [r for r in rows if predicate(r)]
+        return {
+            "calls": len(sub),
+            "tokens": sum(r.total_tokens or 0 for r in sub),
+            "cost": round(sum(r.estimated_cost_usd or 0 for r in sub), 4),
+        }
+
+    today_stats = bucket_stats(lambda r: r.created_at and r.created_at >= today_start)
+    week_stats = bucket_stats(lambda r: r.created_at and r.created_at >= week_start)
+    month_stats = bucket_stats(lambda r: r.created_at and r.created_at >= month_start)
+
+    # By task
+    by_task_map = {}
+    for r in rows:
+        d = by_task_map.setdefault(r.task or "?", {"calls": 0, "tokens": 0, "cost": 0.0})
+        d["calls"] += 1
+        d["tokens"] += r.total_tokens or 0
+        d["cost"] += r.estimated_cost_usd or 0
+    by_task = [{"task": k, **v, "cost": round(v["cost"], 4)} for k, v in by_task_map.items()]
+    by_task.sort(key=lambda x: x["cost"], reverse=True)
+
+    # By provider (cloud vs local)
+    by_provider_map = {}
+    for r in rows:
+        d = by_provider_map.setdefault(r.provider or "?", {"calls": 0, "tokens": 0, "cost": 0.0})
+        d["calls"] += 1
+        d["tokens"] += r.total_tokens or 0
+        d["cost"] += r.estimated_cost_usd or 0
+    by_provider = [{"provider": k, **v, "cost": round(v["cost"], 4)} for k, v in by_provider_map.items()]
+
+    # By model
+    by_model_map = {}
+    for r in rows:
+        d = by_model_map.setdefault(r.model or "?", {"calls": 0, "tokens": 0, "cost": 0.0})
+        d["calls"] += 1
+        d["tokens"] += r.total_tokens or 0
+        d["cost"] += r.estimated_cost_usd or 0
+    by_model = [{"model": k, **v, "cost": round(v["cost"], 4)} for k, v in by_model_map.items()]
+    by_model.sort(key=lambda x: x["calls"], reverse=True)
+
+    # Daily for last 30 days
+    cutoff = now - timedelta(days=30)
+    by_day = {}
+    for r in rows:
+        if not r.created_at or r.created_at < cutoff:
+            continue
+        day = r.created_at.date().isoformat()
+        d = by_day.setdefault(day, {"calls": 0, "tokens": 0, "cost": 0.0})
+        d["calls"] += 1
+        d["tokens"] += r.total_tokens or 0
+        d["cost"] += r.estimated_cost_usd or 0
+    daily = [{"date": k, **v, "cost": round(v["cost"], 4)} for k, v in sorted(by_day.items())]
+
+    return {
+        "total_calls": total_calls,
+        "successful_calls": success_calls,
+        "total_tokens": total_tokens,
+        "total_cost_usd": total_cost,
+        "avg_latency_ms": avg_latency,
+        "today": today_stats,
+        "week": week_stats,
+        "month": month_stats,
+        "by_task": by_task,
+        "by_provider": by_provider,
+        "by_model": by_model,
+        "daily": daily,
+    }
+

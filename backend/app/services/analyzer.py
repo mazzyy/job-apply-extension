@@ -9,9 +9,11 @@ Supports three modes set in AppSettings.llm_provider:
 import json
 import logging
 import re
+import time
 from typing import Optional
 from openai import AzureOpenAI, OpenAI
 from ..config import settings as cfg
+from .llm_pricing import estimate_cost
 
 log = logging.getLogger("jaa.analyzer")
 
@@ -93,16 +95,13 @@ SYSTEM_RECRUITER = (
 
 def _try_call(messages, *, max_tokens: int, want_json: bool, mode: str,
               provider: str, model: str):
-    """One attempt against the selected provider."""
+    """One attempt against the selected provider. Returns (content, finish, usage_dict)."""
     kwargs: dict = {"model": model, "messages": messages}
     if mode == "completion_tokens":
         kwargs["max_completion_tokens"] = max_tokens
     elif mode == "max_tokens":
         kwargs["max_tokens"] = max_tokens
-    if want_json and provider == "cloud":
-        kwargs["response_format"] = {"type": "json_object"}
-    elif want_json and provider == "local":
-        # Ollama supports response_format too (recent versions), but be lenient
+    if want_json:
         kwargs["response_format"] = {"type": "json_object"}
 
     client = _cloud_client() if provider == "cloud" else _local_client()
@@ -110,12 +109,24 @@ def _try_call(messages, *, max_tokens: int, want_json: bool, mode: str,
     choice = resp.choices[0]
     content = (choice.message.content or "").strip()
     finish = getattr(choice, "finish_reason", None)
-    return content, finish
+
+    # Capture token usage when available (OpenAI/Azure responses include it;
+    # Ollama also reports prompt_tokens/completion_tokens via its OpenAI shim)
+    usage = {"prompt_tokens": 0, "completion_tokens": 0, "reasoning_tokens": 0, "total_tokens": 0}
+    if getattr(resp, "usage", None):
+        usage["prompt_tokens"] = getattr(resp.usage, "prompt_tokens", 0) or 0
+        usage["completion_tokens"] = getattr(resp.usage, "completion_tokens", 0) or 0
+        usage["total_tokens"] = getattr(resp.usage, "total_tokens", 0) or 0
+        details = getattr(resp.usage, "completion_tokens_details", None)
+        if details:
+            usage["reasoning_tokens"] = getattr(details, "reasoning_tokens", 0) or 0
+    return content, finish, usage
 
 
 def _chat(messages, *, want_json: bool = True, max_tokens: int = 4000,
           task: str = "analyze_fit") -> str:
-    """Main entrypoint — picks provider, tries multiple call signatures, returns text."""
+    """Main entrypoint — picks provider, tries multiple call signatures, returns text.
+    Logs token usage + cost to the llm_usage table after every successful call."""
     provider, model = _resolve_provider(task)
     log.info("LLM call task=%s provider=%s model=%s", task, provider, model)
 
@@ -126,24 +137,66 @@ def _chat(messages, *, want_json: bool = True, max_tokens: int = 4000,
         ("max_tokens", False),
     ]
     last_err: Optional[Exception] = None
+    accumulated_usage = {"prompt_tokens": 0, "completion_tokens": 0, "reasoning_tokens": 0, "total_tokens": 0}
+    started = time.time()
     for mode, json_mode in attempts:
         try:
-            content, finish = _try_call(
+            content, finish, usage = _try_call(
                 messages, max_tokens=max_tokens,
                 want_json=json_mode, mode=mode,
                 provider=provider, model=model,
             )
-            log.info("  mode=%s json=%s finish=%s len=%d", mode, json_mode, finish, len(content))
+            for k in accumulated_usage:
+                accumulated_usage[k] += usage.get(k, 0)
+            log.info("  mode=%s json=%s finish=%s len=%d tokens=%s",
+                     mode, json_mode, finish, len(content), usage)
             if content:
+                _log_usage(task, provider, model, accumulated_usage,
+                           int((time.time() - started) * 1000), success=True)
                 return content
             log.warning("  empty content — bumping tokens and trying next strategy")
             max_tokens = max(max_tokens, 8000)
         except Exception as e:
             last_err = e
             log.warning("  strategy mode=%s json=%s raised: %s", mode, json_mode, e)
+    # All strategies failed
+    _log_usage(task, provider, model, accumulated_usage,
+               int((time.time() - started) * 1000), success=False,
+               error=str(last_err)[:480] if last_err else "empty content")
     if last_err:
         raise last_err
     raise RuntimeError(f"Model returned empty on every strategy (task={task} provider={provider} model={model})")
+
+
+def _log_usage(task: str, provider: str, model: str, usage: dict,
+               latency_ms: int, *, success: bool = True, error: str | None = None):
+    """Insert one row into the llm_usage table. Best-effort — never raises."""
+    try:
+        from ..database import SessionLocal
+        from ..models import LLMUsage
+        cost = 0.0
+        if provider == "cloud":
+            cost = estimate_cost(model,
+                                 usage.get("prompt_tokens", 0),
+                                 usage.get("completion_tokens", 0) + usage.get("reasoning_tokens", 0))
+        db = SessionLocal()
+        try:
+            row = LLMUsage(
+                task=task, provider=provider, model=model,
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+                reasoning_tokens=usage.get("reasoning_tokens", 0),
+                total_tokens=usage.get("total_tokens", 0),
+                estimated_cost_usd=cost,
+                latency_ms=latency_ms,
+                success=1 if success else 0,
+                error=error,
+            )
+            db.add(row); db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        log.warning("usage logging failed: %s", e)
 
 
 def _parse_json_loose(text: str) -> dict:

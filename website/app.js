@@ -797,3 +797,79 @@ $("#test-connection")?.addEventListener("click", async () => {
 document.querySelectorAll(".sidebar a").forEach(a => a.addEventListener("click", () => {
   if (a.dataset.tab === "settings") loadProviderSettings();
 }));
+
+/* ============================== Overview timeframes ============================== */
+async function loadTimeframes(){
+  try {
+    const o = await API.get("/analytics/overview");
+    const tf = (id, val) => { const el = $(id); if (el) el.textContent = val || 0; };
+    tf("#tf-today-applied", o.today?.applied); tf("#tf-today-analyzed", o.today?.analyzed);
+    tf("#tf-yest-applied",  o.yesterday?.applied); tf("#tf-yest-analyzed",  o.yesterday?.analyzed);
+    tf("#tf-week-applied",  o.week?.applied);  tf("#tf-week-analyzed",  o.week?.analyzed);
+    tf("#tf-month-applied", o.month?.applied); tf("#tf-month-analyzed", o.month?.analyzed);
+
+    // Build a simple 30-day bar chart
+    const chart = $("#daily-chart");
+    if (chart) {
+      const series = o.daily_activity || [];
+      if (!series.length) {
+        chart.innerHTML = '<div class="muted" style="padding:20px;text-align:center">No activity in the last 30 days yet.</div>';
+      } else {
+        const max = Math.max(1, ...series.map(d => d.count));
+        chart.innerHTML = series.map(d => `
+          <div class="bucket" title="${esc(d.date)}: ${d.count}">
+            <span>${d.count}</span>
+            <div class="bar" style="height:${(d.count/max)*100}%"></div>
+            <label>${esc(d.date.slice(5))}</label>
+          </div>`).join("");
+      }
+    }
+  } catch {}
+}
+
+/* ============================== LLM usage on Analytics tab ============================== */
+async function loadLLMUsage(){
+  try {
+    const u = await API.get("/analytics/llm-usage");
+    const set = (id, val) => { const el = $(id); if (el) el.textContent = val; };
+    set("#usage-cost", `$${(u.total_cost_usd || 0).toFixed(4)}`);
+    set("#usage-tokens", (u.total_tokens || 0).toLocaleString());
+    set("#usage-calls", (u.total_calls || 0).toLocaleString());
+    set("#usage-latency", `${u.avg_latency_ms || 0}ms`);
+
+    const tf = (sel, b) => {
+      const el = $(sel); if (!el) return;
+      el.innerHTML = `${b.calls || 0} calls · ${(b.tokens||0).toLocaleString()} tokens · $${(b.cost||0).toFixed(4)}`;
+    };
+    tf("#usage-today", u.today || {});
+    tf("#usage-week",  u.week  || {});
+    tf("#usage-month", u.month || {});
+
+    const provBody = $("#usage-by-provider");
+    if (provBody) {
+      provBody.innerHTML = (u.by_provider || []).map(p => `
+        <tr><td>${esc(p.provider)}</td><td>${p.calls}</td><td>${(p.tokens||0).toLocaleString()}</td><td>$${(p.cost||0).toFixed(4)}</td></tr>
+      `).join("") || `<tr><td colspan="4" class="muted">No data yet.</td></tr>`;
+    }
+    const taskBody = $("#usage-by-task");
+    if (taskBody) {
+      taskBody.innerHTML = (u.by_task || []).map(t => `
+        <tr><td>${esc(t.task)}</td><td>${t.calls}</td><td>${(t.tokens||0).toLocaleString()}</td><td>$${(t.cost||0).toFixed(4)}</td></tr>
+      `).join("") || `<tr><td colspan="4" class="muted">No data yet.</td></tr>`;
+    }
+  } catch {}
+}
+
+// Hook loaders into existing init + tab changes
+const _origLoadStats = loadStats;
+loadStats = async function() {
+  await _origLoadStats();
+  await loadTimeframes();
+};
+
+document.querySelectorAll(".sidebar a").forEach(a => a.addEventListener("click", () => {
+  if (a.dataset.tab === "analytics") loadLLMUsage();
+}));
+
+// Also call on first load
+loadTimeframes();

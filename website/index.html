@@ -30,12 +30,49 @@
 <main>
   <section id="tab-overview" class="tab active">
     <h1>Overview</h1>
+
+    <div class="timeframe-row">
+      <div class="tf-card">
+        <div class="tf-label">Today</div>
+        <div class="tf-stats">
+          <div><span id="tf-today-applied">0</span><label>applied</label></div>
+          <div><span id="tf-today-analyzed">0</span><label>analyzed</label></div>
+        </div>
+      </div>
+      <div class="tf-card">
+        <div class="tf-label">Yesterday</div>
+        <div class="tf-stats">
+          <div><span id="tf-yest-applied">0</span><label>applied</label></div>
+          <div><span id="tf-yest-analyzed">0</span><label>analyzed</label></div>
+        </div>
+      </div>
+      <div class="tf-card">
+        <div class="tf-label">This week</div>
+        <div class="tf-stats">
+          <div><span id="tf-week-applied">0</span><label>applied</label></div>
+          <div><span id="tf-week-analyzed">0</span><label>analyzed</label></div>
+        </div>
+      </div>
+      <div class="tf-card">
+        <div class="tf-label">This month</div>
+        <div class="tf-stats">
+          <div><span id="tf-month-applied">0</span><label>applied</label></div>
+          <div><span id="tf-month-analyzed">0</span><label>analyzed</label></div>
+        </div>
+      </div>
+    </div>
+
     <div class="grid stats">
-      <div class="stat"><span id="stat-total">0</span><label>Roles analyzed</label></div>
-      <div class="stat"><span id="stat-applied">0</span><label>Applied</label></div>
+      <div class="stat"><span id="stat-total">0</span><label>Total analyzed</label></div>
+      <div class="stat"><span id="stat-applied">0</span><label>Total applied</label></div>
       <div class="stat"><span id="stat-interview">0</span><label>Interviewing</label></div>
       <div class="stat"><span id="stat-offer">0</span><label>Offers</label></div>
       <div class="stat"><span id="stat-avg-fit">0</span><label>Avg fit score</label></div>
+    </div>
+
+    <div class="card">
+      <h3>Last 30 days</h3>
+      <div id="daily-chart" class="buckets" style="height:140px"></div>
     </div>
 
     <div class="grid two">
@@ -82,6 +119,36 @@
   <section id="tab-analytics" class="tab">
     <h1>Analytics</h1>
     <div id="analytics-insights" class="card"></div>
+
+    <div class="card">
+      <h3>AI usage & cost</h3>
+      <p class="muted">Tracks every model call we've made. Cloud calls have estimated costs based on Azure OpenAI pricing; local calls are free.</p>
+      <div class="usage-grid">
+        <div class="usage-kpi cost"><div class="num" id="usage-cost">$0.00</div><div class="lab">Total cost</div></div>
+        <div class="usage-kpi tokens"><div class="num" id="usage-tokens">0</div><div class="lab">Total tokens</div></div>
+        <div class="usage-kpi"><div class="num" id="usage-calls">0</div><div class="lab">Calls made</div></div>
+        <div class="usage-kpi"><div class="num" id="usage-latency">0ms</div><div class="lab">Avg latency</div></div>
+      </div>
+
+      <div class="grid two" style="margin-top:14px">
+        <div>
+          <h4 style="margin:0 0 6px;font-size:12px;color:#374151">Today</h4>
+          <div id="usage-today" class="muted"></div>
+          <h4 style="margin:14px 0 6px;font-size:12px;color:#374151">This week</h4>
+          <div id="usage-week" class="muted"></div>
+          <h4 style="margin:14px 0 6px;font-size:12px;color:#374151">This month</h4>
+          <div id="usage-month" class="muted"></div>
+        </div>
+        <div>
+          <h4 style="margin:0 0 6px;font-size:12px;color:#374151">By provider</h4>
+          <table class="apps" style="width:100%"><thead><tr><th>Provider</th><th>Calls</th><th>Tokens</th><th>Cost</th></tr></thead>
+          <tbody id="usage-by-provider"></tbody></table>
+          <h4 style="margin:14px 0 6px;font-size:12px;color:#374151">By task</h4>
+          <table class="apps" style="width:100%"><thead><tr><th>Task</th><th>Calls</th><th>Tokens</th><th>Cost</th></tr></thead>
+          <tbody id="usage-by-task"></tbody></table>
+        </div>
+      </div>
+    </div>
     <div class="grid stats" id="analytics-funnel"></div>
     <div class="grid two">
       <div class="card">
@@ -249,18 +316,27 @@
       <h3>LLM provider</h3>
       <p class="muted">Pick where the AI work runs. <b>Cloud</b> uses Azure OpenAI (gpt-5-mini) — fastest and highest quality, costs ~$0.50/day at moderate use. <b>Local</b> uses Ollama on this machine — free and private, slower, slightly weaker on deep reasoning. <b>Hybrid</b> is the recommended default — routine tasks go local, deep-reasoning tasks go cloud.</p>
 
-      <div id="provider-radios" style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0">
-        <label class="prov-radio">
+      <div id="provider-radios">
+        <label class="prov-card">
           <input type="radio" name="provider" value="cloud"/>
-          <div><b>Cloud</b><div class="muted">gpt-5-mini · fastest</div></div>
+          <div class="prov-card-content">
+            <div class="prov-card-title">Cloud</div>
+            <div class="prov-card-sub">gpt-5-mini · fastest, highest quality</div>
+          </div>
         </label>
-        <label class="prov-radio">
+        <label class="prov-card">
           <input type="radio" name="provider" value="local"/>
-          <div><b>Local</b><div class="muted">Ollama · free + private</div></div>
+          <div class="prov-card-content">
+            <div class="prov-card-title">Local</div>
+            <div class="prov-card-sub">Ollama · free + fully private</div>
+          </div>
         </label>
-        <label class="prov-radio">
+        <label class="prov-card">
           <input type="radio" name="provider" value="hybrid"/>
-          <div><b>Hybrid</b><div class="muted">smart routing · recommended</div></div>
+          <div class="prov-card-content">
+            <div class="prov-card-title">Hybrid <span class="prov-badge">Recommended</span></div>
+            <div class="prov-card-sub">Routine work local, deep reasoning cloud</div>
+          </div>
         </label>
       </div>
 
