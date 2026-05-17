@@ -249,11 +249,8 @@ def _ping_provider(provider: str, model: str) -> dict:
 
 
 def verify_model() -> dict:
-    """Smart verifier:
-    - cloud mode  → tests cloud
-    - local mode  → tests local
-    - hybrid mode → tests BOTH, returns per-provider results
-    """
+    """Always tests BOTH providers (cloud + local) regardless of mode.
+    This lets the user verify their Ollama setup before flipping to local/hybrid."""
     row = _get_settings_row()
     mode = (row.llm_provider or "cloud").lower()
     base_info = {
@@ -264,19 +261,15 @@ def verify_model() -> dict:
         "cloud_model": cfg.AZURE_OPENAI_DEPLOYMENT,
     }
 
-    cloud_result = None
-    local_result = None
-    if mode in ("cloud", "hybrid"):
-        cloud_result = _ping_provider("cloud", cfg.AZURE_OPENAI_DEPLOYMENT)
-    if mode in ("local", "hybrid"):
-        local_result = _ping_provider("local", row.local_model or "llama3.2:3b")
+    cloud_result = _ping_provider("cloud", cfg.AZURE_OPENAI_DEPLOYMENT)
+    local_result = _ping_provider("local", row.local_model or "llama3.2:3b")
 
-    # Aggregate top-level ok/error so existing UI keeps working
+    # Top-level "ok" reflects the currently-active mode so the header dot is honest
     if mode == "cloud":
         primary = cloud_result
     elif mode == "local":
         primary = local_result
-    else:  # hybrid — both must be ok for overall ok=True
+    else:  # hybrid
         if cloud_result and local_result:
             both_ok = cloud_result.get("ok") and local_result.get("ok")
             primary = {
