@@ -30,6 +30,11 @@ def ensure_schema():
         ("questions", "last_input_type", "VARCHAR(40)"),
         ("questions", "last_max_length", "INTEGER"),
         ("questions", "last_options", "TEXT"),
+        ("profiles", "salutation", "VARCHAR(40)"),
+        ("profiles", "nobility_title", "VARCHAR(80)"),
+        ("profiles", "gender", "VARCHAR(40)"),
+        ("profiles", "eu_work_auth", "VARCHAR(20)"),
+        ("question_answers", "answer_type", "VARCHAR(40) DEFAULT 'text'"),
     ]
     with engine.begin() as conn:
         for table, col, ddl in add_cols:

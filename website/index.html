@@ -189,6 +189,7 @@
     <p class="muted">Fill these in once. Easy Apply and Autofill will reuse them across every job — no LLM guessing, no needs-review queue.</p>
     <div style="margin:12px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <button id="seed-bank-btn">Load 280+ common questions</button>
+      <button id="translate-bank-btn" class="secondary" title="Translate any non-English questions to English so your library stays consistent">Translate to English</button>
       <input id="bank-search" placeholder="Search questions…" style="flex:1;min-width:200px"/>
       <select id="bank-cat-filter">
         <option value="">All categories</option>
@@ -288,6 +289,14 @@
   <section id="tab-profile" class="tab">
     <h1>Profile (used for autofill)</h1>
     <form id="profile-form" class="card grid two-form">
+      <label>Salutation
+        <select name="salutation">
+          <option value=""></option>
+          <option>Mr</option><option>Ms</option><option>Mx</option>
+          <option>Dr</option><option>Prof</option><option>Prof. Dr.</option>
+        </select>
+      </label>
+      <label>Title (of nobility) <input name="nobility_title" placeholder="e.g. Dr., Prof. Dr."/></label>
       <label>Full name <input name="full_name" /></label>
       <label>Email <input name="email" type="email" /></label>
       <label>First name <input name="first_name" /></label>
@@ -304,6 +313,19 @@
       <label>Work authorization <input name="work_authorization" placeholder="e.g. EU citizen / needs sponsorship" /></label>
       <label>Salary expectation <input name="salary_expectation" /></label>
       <label>Notice period <input name="notice_period" /></label>
+      <label>Gender
+        <select name="gender">
+          <option value=""></option>
+          <option>Male</option><option>Female</option>
+          <option>Non-binary</option><option>Prefer not to say</option>
+        </select>
+      </label>
+      <label>EU work authorization (without sponsorship?)
+        <select name="eu_work_auth">
+          <option value=""></option>
+          <option>Yes</option><option>No</option>
+        </select>
+      </label>
       <button type="submit">Save profile</button>
       <div id="profile-status" class="muted"></div>
     </form>

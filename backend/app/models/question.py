@@ -31,6 +31,7 @@ class QuestionAnswer(Base):
     id = Column(Integer, primary_key=True, index=True)
     question_id = Column(Integer, ForeignKey("questions.id"), nullable=False)
     answer = Column(Text, nullable=False)
+    answer_type = Column(String(40), default="text")  # number | text | textarea | select | radio
     is_default = Column(Integer, default=0)           # 0/1 flag for the user's go-to answer
     application_id = Column(Integer, ForeignKey("applications.id"), nullable=True)  # which app it was used in
     use_count = Column(Integer, default=0)

@@ -202,3 +202,70 @@ def answer(req: QuestionRequest, db: Session = Depends(get_db)):
         }, ensure_ascii=False)
     answer = answer_application_question(req.question, cv.raw_text, profile_json)
     return {"answer": answer}
+
+
+class LinkedInMessageRequest(BaseModel):
+    job_description: str
+    job_title: str | None = None
+    company: str | None = None
+    recruiter_name: str | None = None
+    recruiter_title: str | None = None
+    cv_id: int | None = None
+    style: str = "polite-direct"           # polite-direct | warm | concise
+
+
+@router.post("/linkedin-message")
+def linkedin_message(req: LinkedInMessageRequest, db: Session = Depends(get_db)):
+    """Draft a short LinkedIn DM to the person who posted the job.
+    Designed to be sent AFTER applying — references the application + 1-2 CV highlights."""
+    if not req.job_description or len(req.job_description.strip()) < 80:
+        raise HTTPException(400, "Job description too short for a LinkedIn message.")
+    cv, _ = _resolve_cv(req.cv_id, db, req.job_description, auto_select=True)
+
+    addressee = req.recruiter_name or "Hi"
+    # If we have a recruiter name and it looks like "John Smith" — use first name only
+    first_name = ""
+    if req.recruiter_name:
+        first_name = req.recruiter_name.strip().split()[0]
+
+    style_hint = {
+        "polite-direct": "Polite and direct. Plain language. Confident but not pushy.",
+        "warm":          "Warm and friendly. Conversational tone. Slight informality is fine.",
+        "concise":       "Very concise. Under 90 words. Just the essentials.",
+    }.get(req.style, "Polite and direct.")
+
+    jd_chunk = (req.job_description or "")[:4000]
+    cv_chunk = (cv.raw_text or "")[:3500]
+    first_name_for_prompt = first_name or "[Name]"
+    prompt = (
+        "Write a short LinkedIn message from the candidate to the role's poster.\n\n"
+        f"ROLE: {req.job_title or '(unknown)'}\n"
+        f"COMPANY: {req.company or '(unknown)'}\n"
+        f"RECIPIENT: {req.recruiter_name or '(unknown)'} ({req.recruiter_title or 'the poster'})\n\n"
+        f"JOB DESCRIPTION:\n<<JD>>\n{jd_chunk}\n<<END>>\n\n"
+        f"CANDIDATE CV:\n<<CV>>\n{cv_chunk}\n<<END>>\n\n"
+        "Rules:\n"
+        f"- {style_hint}\n"
+        "- 110-180 words. Strictly no longer.\n"
+        f"- Greeting uses the recipient's first name if available: \"Hi {first_name_for_prompt},\"\n"
+        "- Open by saying the candidate just applied to the role.\n"
+        "- Reference exactly TWO concrete CV highlights that match TWO concrete JD requirements. Be specific (skills, projects, years).\n"
+        "- No clichés (\"dynamic\", \"passionate\", \"synergy\", \"rockstar\", \"ninja\").\n"
+        "- Do not ask for anything beyond \"happy to chat further\" — never beg for an interview.\n"
+        "- Sign off with just the candidate's first name.\n"
+        "- Plain prose. No bullets. No markdown. No emoji."
+    )
+
+    text = _chat(
+        [
+            {"role": "system", "content": "You write specific, professional LinkedIn DMs that don't sound like cold-outreach templates."},
+            {"role": "user", "content": prompt},
+        ],
+        want_json=False, max_tokens=900, task="cover_letter",
+    )
+    return {
+        "message": text.strip(),
+        "cv_used": {"id": cv.id, "label": cv.label},
+        "recipient": req.recruiter_name or None,
+    }
+

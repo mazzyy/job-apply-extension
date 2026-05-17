@@ -11,6 +11,8 @@ from ..services.question_matcher import normalize, similarity, classify
 from ..services.analyzer import answer_application_question
 from ..services.typed_answer import answer_for_form, lookup_default_answer
 from ..services.answer_bank import SEED_QUESTIONS
+from ..services.translator import to_english, from_english, is_english
+from ..services.language import detect_language
 
 router = APIRouter(prefix="/questions", tags=["questions"])
 
@@ -23,6 +25,7 @@ class QuestionIn(BaseModel):
 
 class AnswerIn(BaseModel):
     answer: str
+    answer_type: str = "text"                       # number | text | textarea | select | radio
     is_default: bool = False
     application_id: int | None = None
 
@@ -64,7 +67,9 @@ def _q_to_dict(q: Question, db: Session) -> dict:
 def _a_to_dict(a: QuestionAnswer) -> dict:
     return {
         "id": a.id, "question_id": a.question_id,
-        "answer": a.answer, "is_default": bool(a.is_default),
+        "answer": a.answer,
+        "answer_type": a.answer_type or "text",
+        "is_default": bool(a.is_default),
         "application_id": a.application_id,
         "use_count": a.use_count,
         "created_at": a.created_at.isoformat(),
@@ -124,6 +129,7 @@ def add_answer(qid: int, body: AnswerIn, db: Session = Depends(get_db)):
         db.query(QuestionAnswer).filter(QuestionAnswer.question_id == qid).update({QuestionAnswer.is_default: 0})
     a = QuestionAnswer(
         question_id=qid, answer=body.answer.strip(),
+        answer_type=body.answer_type or "text",
         is_default=1 if body.is_default else 0,
         application_id=body.application_id,
     )
@@ -139,6 +145,8 @@ def update_answer(aid: int, body: AnswerIn, db: Session = Depends(get_db)):
     a = db.query(QuestionAnswer).filter(QuestionAnswer.id == aid).first()
     if not a: raise HTTPException(404, "Not found")
     a.answer = body.answer.strip()
+    if body.answer_type:
+        a.answer_type = body.answer_type
     if body.is_default:
         db.query(QuestionAnswer).filter(QuestionAnswer.question_id == a.question_id).update({QuestionAnswer.is_default: 0})
         a.is_default = 1
@@ -292,18 +300,29 @@ def answer_for_form_route(body: FormAnswerRequest, db: Session = Depends(get_db)
         if a:
             job_context = f"\nJOB CONTEXT: Role {a.job_title} at {a.company}. JD snippet: {(a.job_description or '')[:1000]}\n"
 
-    # FIRST: check the curated answer bank. If the user has pre-answered this question
-    # (or a close paraphrase), use that directly — no LLM call, no needs_review.
-    bank_hit = lookup_default_answer(db, body.text, input_type=body.input_type)
+    # Detect the form's language so we can translate back at the end
+    form_lang = detect_language(body.text)
+    english_question = body.text if is_english(body.text) else to_english(body.text)
+
+    # FIRST: check the curated answer bank against the English version.
+    bank_hit = lookup_default_answer(db, english_question, input_type=body.input_type)
     if bank_hit:
+        value = bank_hit["value"]
+        # If the form is non-English AND the answer is a long-form text (not number/select),
+        # translate the saved answer to the form's language so it reads naturally.
+        if body.input_type in ("text", "textarea") and form_lang not in ("en", "unknown") and isinstance(value, str) and len(value) > 30:
+            try:
+                value = from_english(value, form_lang)
+            except Exception:
+                pass
         return {
-            "value": bank_hit["value"],
-            "explanation": bank_hit["explanation"],
+            "value": value,
+            "explanation": bank_hit["explanation"] + (f" (translated to {form_lang})" if form_lang not in ("en","unknown") else ""),
             "confidence": bank_hit["confidence"],
             "needs_review": False,
             "source": "library",
             "question_id": bank_hit.get("question_id"),
-            "answer_id": None,
+            "answer_id": bank_hit.get("answer_id"),
         }
 
     typed = answer_for_form(
@@ -316,14 +335,16 @@ def answer_for_form_route(body: FormAnswerRequest, db: Session = Depends(get_db)
         job_context=job_context,
     )
 
-    # Save the question regardless — user reviews later
+    # Save the question regardless — user reviews later.
+    # Always store the ENGLISH form in the library so the user sees one canonical version.
     saved_qid = None
     saved_aid = None
     if body.save:
-        norm = normalize(body.text)
+        text_for_library = english_question
+        norm = normalize(text_for_library)
         q = db.query(Question).filter(Question.normalized == norm).first()
         if not q:
-            q = Question(text=body.text.strip(), normalized=norm, category=classify(body.text))
+            q = Question(text=text_for_library.strip(), normalized=norm, category=classify(text_for_library))
             db.add(q); db.flush()
         q.needs_review = 1 if typed.get("needs_review", False) else (q.needs_review or 0)
         q.last_input_type = body.input_type
@@ -473,4 +494,33 @@ def create_custom_question(body: QuestionUpdate, db: Session = Depends(get_db)):
     )
     db.add(q); db.commit(); db.refresh(q)
     return _q_to_dict(q, db)
+
+
+@router.post("/translate-to-english")
+def translate_existing_to_english(db: Session = Depends(get_db)):
+    """Translate every non-English question in the library to English.
+    Idempotent — already-English questions are skipped.
+    Heavy operation; only run when user explicitly asks via dashboard button."""
+    rows = db.query(Question).all()
+    translated = 0
+    skipped = 0
+    for q in rows:
+        if is_english(q.text):
+            skipped += 1
+            continue
+        english = to_english(q.text)
+        if english and english.strip() != q.text.strip():
+            # Check if an English version already exists — merge if so
+            new_norm = normalize(english)
+            existing = db.query(Question).filter(Question.normalized == new_norm, Question.id != q.id).first()
+            if existing:
+                # Move this question's answers under the existing English question
+                db.query(QuestionAnswer).filter(QuestionAnswer.question_id == q.id).update({QuestionAnswer.question_id: existing.id})
+                db.delete(q)
+            else:
+                q.text = english
+                q.normalized = new_norm
+            translated += 1
+    db.commit()
+    return {"translated": translated, "skipped": skipped, "total": len(rows)}
 

@@ -26,6 +26,10 @@ class ProfileIn(BaseModel):
     languages: list | None = None
     salary_expectation: str | None = None
     notice_period: str | None = None
+    salutation: str | None = None
+    nobility_title: str | None = None
+    gender: str | None = None
+    eu_work_auth: str | None = None
     extra: dict | None = None
 
 @router.get("/")
@@ -61,5 +65,7 @@ def _serialize(p: Profile) -> dict:
         "years_experience": p.years_experience, "work_authorization": p.work_authorization,
         "languages": json.loads(p.languages) if p.languages else [],
         "salary_expectation": p.salary_expectation, "notice_period": p.notice_period,
+        "salutation": p.salutation, "nobility_title": p.nobility_title,
+        "gender": p.gender, "eu_work_auth": p.eu_work_auth,
         "extra": json.loads(p.extra_json) if p.extra_json else {},
     }

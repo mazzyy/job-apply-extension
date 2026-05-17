@@ -353,3 +353,50 @@ function renderEasyApplyAnswers(items){
   document.querySelector("#letter-card")?.before(card);
   document.getElementById("ea-close")?.addEventListener("click", () => card.remove());
 }
+
+/* ============================== LinkedIn DM generator ============================== */
+async function generateLinkedInMessage() {
+  const card = $("#linkedin-msg-card");
+  const ta = $("#linkedin-msg-text");
+  const ls = $("#msg-status");
+  card?.classList.remove("hidden");
+
+  if (!lastJobPayload) {
+    lastJobPayload = await extractCurrentJob();
+    if (!lastJobPayload) {
+      setStatus(ls, "Open a job page first.", "err");
+      return;
+    }
+  }
+  ta.value = "";
+  setLoadingStatus(ls, "Drafting LinkedIn message…");
+  try {
+    const resp = await chrome.runtime.sendMessage({
+      type: "API_POST", path: "/analyze/linkedin-message",
+      body: {
+        job_description: lastJobPayload.job_description,
+        job_title: lastJobPayload.job_title,
+        company: lastJobPayload.company,
+        recruiter_name: lastJobPayload.recruiter_name || "",
+        recruiter_title: lastJobPayload.recruiter_title || "",
+        cv_id: lastAnalysis?.cv_used?.id || undefined,
+        style: "polite-direct",
+      },
+    });
+    if (!resp?.ok) throw new Error(resp?.error || "Failed");
+    ta.value = resp.data.message || "";
+    const who = resp.data.recipient ? ` for ${resp.data.recipient}` : "";
+    setStatus(ls, `Drafted${who}.`, "ok");
+    card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (e) {
+    setStatus(ls, e.message, "err");
+  }
+}
+
+$("#linkedin-msg-btn")?.addEventListener("click", generateLinkedInMessage);
+$("#regen-msg")?.addEventListener("click", generateLinkedInMessage);
+$("#close-msg")?.addEventListener("click", () => $("#linkedin-msg-card")?.classList.add("hidden"));
+$("#copy-msg")?.addEventListener("click", async () => {
+  await navigator.clipboard.writeText($("#linkedin-msg-text").value);
+  setStatus($("#msg-status"), "Copied to clipboard.", "ok");
+});

@@ -267,18 +267,40 @@ def lookup_default_answer(db, question_text: str, input_type: str | None = None)
             q = best
     if not q:
         return None
-    default = (
+    # Prefer the saved answer matching the form's input type.
+    # E.g. if form expects a number, use the saved "number" variant if one exists;
+    # otherwise fall back to any default answer.
+    candidates = (
         db.query(QuestionAnswer)
-        .filter(QuestionAnswer.question_id == q.id, QuestionAnswer.is_default == 1)
-        .first()
+        .filter(QuestionAnswer.question_id == q.id)
+        .order_by(QuestionAnswer.is_default.desc(), QuestionAnswer.last_used_at.desc())
+        .all()
     )
-    if not default:
+    if not candidates:
         return None
+
+    chosen = None
+    if input_type:
+        # Exact type match wins
+        chosen = next((a for a in candidates if (a.answer_type or "text") == input_type), None)
+        # Compatible types: textarea ~ text, select/radio ~ text
+        if not chosen and input_type in {"textarea"}:
+            chosen = next((a for a in candidates if (a.answer_type or "text") == "text"), None)
+        if not chosen and input_type in {"select", "radio"}:
+            chosen = next((a for a in candidates if (a.answer_type or "text") in {"select", "radio", "text"}), None)
+        if not chosen and input_type == "number":
+            # Only return a number-typed answer for numeric fields — never paste prose
+            # into a number field. Returning None forces fallback to AI.
+            return None
+    if not chosen:
+        chosen = next((a for a in candidates if a.is_default), candidates[0])
+
     return {
-        "value": default.answer,
-        "explanation": f"From your saved answer to: \"{q.text[:80]}\"",
+        "value": chosen.answer,
+        "explanation": f"From your saved {chosen.answer_type or 'text'} answer to: \"{q.text[:80]}\"",
         "confidence": 0.95,
         "needs_review": False,
         "source": "library",
         "question_id": q.id,
+        "answer_id": chosen.id,
     }

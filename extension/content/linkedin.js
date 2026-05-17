@@ -72,11 +72,27 @@
     ]);
 
     if (!title || !description || description.length < 200) return null;
+    // Try to find "Posted by" / hiring team — there are 3 layouts LinkedIn uses
+    let recruiterName = "";
+    let recruiterTitle = "";
+    const recBlock =
+      $(".jobs-poster") ||
+      $(".job-details-jobs-unified-top-card__job-poster-container") ||
+      $(".hirer-card") ||
+      $(".hiring-team-info");
+    if (recBlock) {
+      const nameEl = recBlock.querySelector("a[href*='/in/'], .jobs-poster__name, .hirer-card__hirer-information a, strong");
+      if (nameEl) recruiterName = textOf(nameEl);
+      const titleEl = recBlock.querySelector(".jobs-poster__name + div, .hirer-card__hirer-job-title, .text-body-small");
+      if (titleEl) recruiterTitle = textOf(titleEl);
+    }
     return {
       job_title: title,
       company,
       location,
       job_description: description,
+      recruiter_name: recruiterName,
+      recruiter_title: recruiterTitle,
       url: "",
       source: "linkedin",
     };

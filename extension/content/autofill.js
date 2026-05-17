@@ -32,6 +32,20 @@
     { keys: ["work authorization", "right to work", "authorized to work", "visa", "arbeitserlaubnis", "aufenthaltsstatus"], src: "work_authorization" },
     { keys: ["salary expectation", "expected salary", "compensation", "gehaltsvorstellung", "wunschgehalt"], src: "salary_expectation" },
     { keys: ["notice period", "kündigungsfrist", "verfügbar ab", "available from", "start date"], src: "notice_period" },
+    // --- new in v0.10: 10 extra labels from German + English forms ---
+    { keys: ["salutation", "anrede", "title", "title (of nobility)", "form of address", "honorific"], src: "salutation" },
+    { keys: ["title of nobility", "nobility title", "adelstitel"], src: "nobility_title" },
+    { keys: ["gender", "geschlecht", "sex"], src: "gender" },
+    { keys: [
+        "authorized to work in the eu", "authorized to work in eu", "eu work authorization",
+        "berechtigt in der eu zu arbeiten", "berechtigt in eu zu arbeiten",
+        "right to work in the eu", "right to work in eu",
+        "legally authorized to work in the eu without visa sponsorship",
+        "without visa sponsorship",
+      ], src: "eu_work_auth" },
+    { keys: ["desired salary range", "salary range", "salary range including currency",
+             "gehaltsband", "gehaltsspanne", "wunschgehaltsspanne"], src: "salary_expectation" },
+    { keys: ["current designation", "designation", "current job designation"], src: "current_title" },
   ];
 
   function labelTextFor(input) {

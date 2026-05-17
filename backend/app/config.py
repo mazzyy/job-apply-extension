@@ -62,10 +62,7 @@ class Settings:
         os.getenv("AZURE_OPENAI_ENDPOINT"),
         "https://veilixdocumentextraction.openai.azure.com/",
     )
-    AZURE_OPENAI_API_KEY: str = _real(
-        os.getenv("AZURE_OPENAI_API_KEY"),
-        "replace-with-your-key",
-    )
+    AZURE_OPENAI_API_KEY: str = os.getenv("AZURE_OPENAI_API_KEY", "")
     AZURE_OPENAI_DEPLOYMENT: str = _real(os.getenv("AZURE_OPENAI_DEPLOYMENT"), "gpt-5-mini")
     AZURE_OPENAI_API_VERSION: str = _real(os.getenv("AZURE_OPENAI_API_VERSION"), "2024-02-15-preview")
 

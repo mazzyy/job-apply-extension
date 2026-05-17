@@ -213,32 +213,88 @@ def _parse_json_loose(text: str) -> dict:
         return {}
 
 
-def verify_model() -> dict:
-    info = {}
+def _ping_provider(provider: str, model: str) -> dict:
+    """Send a tiny 'reply PONG' request to one specific provider. Returns
+    {ok, provider, model, reply, error}."""
     try:
-        row = _get_settings_row()
-        info["provider_mode"] = row.llm_provider
-        info["local_model"] = row.local_model
-        info["local_base_url"] = row.local_base_url
-        reply = _chat(
-            [
-                {"role": "system", "content": "You are a health check. Reply with the single word: PONG."},
-                {"role": "user", "content": "ping"},
-            ],
-            want_json=False,
-            max_tokens=200,
-            task="verify_model",
-        )
-        info["ok"] = True
-        info["reply"] = (reply or "").strip()[:80]
-        provider, model = _resolve_provider("verify_model")
-        info["provider"] = provider
-        info["model"] = model
-        return info
+        # Build a temporary call that bypasses HYBRID_DEFAULTS routing
+        kwargs: dict = {"model": model, "messages": [
+            {"role": "system", "content": "You are a health check. Reply with the single word: PONG."},
+            {"role": "user", "content": "ping"},
+        ]}
+        # Use max_completion_tokens first (newer), fall back to max_tokens
+        for token_arg in ("max_completion_tokens", "max_tokens"):
+            try:
+                call_kwargs = dict(kwargs)
+                call_kwargs[token_arg] = 200
+                client = _cloud_client() if provider == "cloud" else _local_client()
+                resp = client.chat.completions.create(**call_kwargs)
+                content = (resp.choices[0].message.content or "").strip()
+                return {
+                    "ok": True, "provider": provider, "model": model,
+                    "reply": content[:80] or "(empty)",
+                }
+            except Exception as e:
+                msg = str(e).lower()
+                if "max_completion_tokens" in msg or "max_tokens" in msg:
+                    continue
+                raise
+        return {"ok": False, "provider": provider, "model": model,
+                "error": "All token-argument strategies failed"}
     except Exception as e:
-        info["ok"] = False
-        info["error"] = f"{type(e).__name__}: {e}"
-        return info
+        return {
+            "ok": False, "provider": provider, "model": model,
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+
+def verify_model() -> dict:
+    """Smart verifier:
+    - cloud mode  → tests cloud
+    - local mode  → tests local
+    - hybrid mode → tests BOTH, returns per-provider results
+    """
+    row = _get_settings_row()
+    mode = (row.llm_provider or "cloud").lower()
+    base_info = {
+        "provider_mode": mode,
+        "local_model": row.local_model,
+        "local_base_url": row.local_base_url,
+        "cloud_endpoint": cfg.AZURE_OPENAI_ENDPOINT,
+        "cloud_model": cfg.AZURE_OPENAI_DEPLOYMENT,
+    }
+
+    cloud_result = None
+    local_result = None
+    if mode in ("cloud", "hybrid"):
+        cloud_result = _ping_provider("cloud", cfg.AZURE_OPENAI_DEPLOYMENT)
+    if mode in ("local", "hybrid"):
+        local_result = _ping_provider("local", row.local_model or "llama3.2:3b")
+
+    # Aggregate top-level ok/error so existing UI keeps working
+    if mode == "cloud":
+        primary = cloud_result
+    elif mode == "local":
+        primary = local_result
+    else:  # hybrid — both must be ok for overall ok=True
+        if cloud_result and local_result:
+            both_ok = cloud_result.get("ok") and local_result.get("ok")
+            primary = {
+                "ok": bool(both_ok),
+                "provider": "hybrid",
+                "model": f"{cloud_result.get('model')} + {local_result.get('model')}",
+                "reply": f"cloud: {cloud_result.get('reply') or cloud_result.get('error')} | local: {local_result.get('reply') or local_result.get('error')}",
+                "error": None if both_ok else (
+                    "; ".join(filter(None, [
+                        f"cloud: {cloud_result.get('error')}" if not cloud_result.get('ok') else None,
+                        f"local: {local_result.get('error')}" if not local_result.get('ok') else None,
+                    ]))
+                ),
+            }
+        else:
+            primary = {"ok": False, "error": "Failed to test either provider"}
+
+    return {**base_info, **(primary or {}), "cloud_result": cloud_result, "local_result": local_result}
 
 
 def analyze_fit(cv_text: str, job_description: str, job_title: str = "", company: str = "") -> dict:

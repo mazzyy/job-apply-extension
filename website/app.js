@@ -556,31 +556,56 @@ function renderBank(){
 }
 
 function renderBankRow(q){
-  const def = (q.answers || []).find(a => a.is_default);
   const opts = q.last_options ? JSON.parse(q.last_options) : null;
   const inputType = q.last_input_type || "text";
-  const value = def?.answer || "";
-  const inputHtml = renderAnswerInput(q.id, inputType, opts, value);
-  return `<div class="bank-row" data-qid="${q.id}" style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px dashed #f1f5f9">
-    <div style="flex:1;min-width:0">
-      <div class="bank-q-view" style="font-size:13px;${def?'':'color:#92400e'}">
-        ${esc(q.text)}${def?' <span style="color:#16a34a">✓</span>':''}
-        <button class="ghost edit-q" style="background:none;border:none;color:#6b7280;cursor:pointer;font-size:11px;padding:2px 6px;margin-left:6px">edit</button>
-        <span class="muted" style="font-size:11px">[${esc(inputType)}${opts ? ` · ${opts.length} opts` : ''}]</span>
-      </div>
-      <div class="bank-q-edit hidden" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
-        <input class="eq-text" value="${esc(q.text)}" style="flex:1;min-width:240px"/>
-        <select class="eq-type" style="max-width:140px">
-          ${["number","text","textarea","select","radio"].map(t => `<option ${t===inputType?'selected':''}>${t}</option>`).join("")}
-        </select>
-        <input class="eq-options" placeholder="opts (comma-sep)" value="${esc(opts?opts.join(", "):'')}" style="flex:1;min-width:200px"/>
-        <button class="eq-save secondary">Save</button>
-        <button class="eq-cancel ghost" style="background:none;border:none;cursor:pointer;color:#6b7280">cancel</button>
-      </div>
-      <div class="bank-input-wrap" style="margin-top:2px">${inputHtml}</div>
+
+  // Group existing answers by answer_type so the row can show both a number variant AND a text variant
+  const answers = q.answers || [];
+  const byType = {
+    number: answers.find(a => (a.answer_type || "text") === "number"),
+    text:   answers.find(a => (a.answer_type || "text") === "text"),
+    textarea: answers.find(a => (a.answer_type || "text") === "textarea"),
+    select: answers.find(a => (a.answer_type || "text") === "select"),
+    radio:  answers.find(a => (a.answer_type || "text") === "radio"),
+  };
+  const hasAny = answers.length > 0;
+
+  // Which variants make sense for this question? Always include the declared type
+  // plus "number" and "text" so the user can save both flavours.
+  const offered = new Set([inputType, "number", "text"]);
+  if (opts) { offered.add("select"); offered.add("radio"); }
+
+  const variantsHtml = Array.from(offered).map(t => {
+    const a = byType[t];
+    const val = a?.answer || "";
+    const inputHtml = renderAnswerInput(q.id, t, opts, val);
+    return `<div class="variant-row" data-qid="${q.id}" data-type="${t}" data-aid="${a?.id || ''}" style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap">
+      <span style="min-width:60px;font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase">${esc(t)}</span>
+      <div class="variant-input" style="flex:1;min-width:160px">${inputHtml}</div>
+      <button class="secondary save-variant">Save</button>
+      ${a ? `<button class="ghost del-variant" style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:11px">×</button>` : ''}
+    </div>`;
+  }).join("");
+
+  return `<div class="bank-row" data-qid="${q.id}" style="padding:8px 0;border-bottom:1px dashed #f1f5f9">
+    <div class="bank-q-view" style="font-size:13px;${hasAny?'':'color:#92400e'}">
+      ${esc(q.text)}${hasAny?' <span style="color:#16a34a">✓</span>':''}
+      <button class="ghost edit-q" style="background:none;border:none;color:#6b7280;cursor:pointer;font-size:11px;padding:2px 6px;margin-left:6px">edit</button>
+      <span class="muted" style="font-size:11px">[default type: ${esc(inputType)}${opts ? ` · ${opts.length} opts` : ''}]</span>
+      <button class="danger del-bank" data-qid="${q.id}" title="Delete question" style="float:right;padding:4px 8px;font-size:11px">delete</button>
     </div>
-    <button class="secondary save-bank" data-qid="${q.id}" data-aid="${def?.id || ''}">Save</button>
-    <button class="danger del-bank" data-qid="${q.id}" title="Delete question" style="padding:6px 8px">×</button>
+    <div class="bank-q-edit hidden" style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0">
+      <input class="eq-text" value="${esc(q.text)}" style="flex:1;min-width:240px"/>
+      <select class="eq-type" style="max-width:140px">
+        ${["number","text","textarea","select","radio"].map(t => `<option ${t===inputType?'selected':''}>${t}</option>`).join("")}
+      </select>
+      <input class="eq-options" placeholder="opts (comma-sep)" value="${esc(opts?opts.join(", "):'')}" style="flex:1;min-width:200px"/>
+      <button class="eq-save secondary">Save</button>
+      <button class="eq-cancel ghost" style="background:none;border:none;cursor:pointer;color:#6b7280">cancel</button>
+    </div>
+    <div class="variant-stack" style="margin-top:6px;background:#fafbff;border-radius:8px;padding:8px 10px">
+      ${variantsHtml}
+    </div>
   </div>`;
 }
 
@@ -607,6 +632,38 @@ function renderAnswerInput(qid, inputType, opts, value){
 }
 
 function wireBankRows(){
+  // New: save / delete individual variants
+  $all(".save-variant").forEach(b => b.addEventListener("click", async () => {
+    const row = b.closest(".variant-row");
+    const qid = +row.dataset.qid;
+    const type = row.dataset.type;
+    const aid = row.dataset.aid;
+    const input = row.querySelector(".variant-input");
+    let val;
+    const inner = input.querySelector("input, textarea, select, [type=radio]:checked");
+    if (input.querySelector("input[type=radio]")) {
+      const picked = input.querySelector("input[type=radio]:checked");
+      val = picked ? picked.value : "";
+    } else {
+      val = inner ? inner.value : "";
+    }
+    if (!val) { b.textContent = "empty"; setTimeout(()=>b.textContent="Save", 1200); return; }
+    if (aid) {
+      await API.patch(`/questions/answers/${aid}`, { answer: val, answer_type: type, is_default: true });
+    } else {
+      await API.post(`/questions/by-id/${qid}/answers`, { answer: val, answer_type: type, is_default: true });
+    }
+    b.textContent = "saved ✓"; setTimeout(loadAnswerBank, 500);
+  }));
+  $all(".del-variant").forEach(b => b.addEventListener("click", async () => {
+    const row = b.closest(".variant-row");
+    const aid = row.dataset.aid;
+    if (!aid) return;
+    if (!confirm("Delete this answer variant?")) return;
+    await API.del(`/questions/answers/${aid}`);
+    loadAnswerBank();
+  }));
+
   $all(".save-bank").forEach(b => b.addEventListener("click", async () => {
     const qid = b.dataset.qid; const aid = b.dataset.aid;
     const row = b.parentElement;
@@ -780,16 +837,32 @@ $("#save-provider")?.addEventListener("click", async () => {
 });
 
 $("#test-connection")?.addEventListener("click", async () => {
-  $("#provider-status").textContent = "Pinging deployment…";
+  const out = $("#provider-status");
+  out.textContent = "Pinging…";
   try {
     const r = await API.post("/verify-model", {});
-    if (r.ok) {
-      $("#provider-status").innerHTML = `<span style="color:#16a34a">✓ ${esc(r.provider||'?')} · ${esc(r.model||'?')} replied: ${esc(r.reply||'')}</span>`;
-    } else {
-      $("#provider-status").innerHTML = `<span style="color:#b91c1c">✗ ${esc(r.error||'failed')}</span>`;
+    const rows = [];
+    if (r.cloud_result) {
+      const c = r.cloud_result;
+      rows.push(c.ok
+        ? `<div style="color:#16a34a">✓ <b>Cloud</b> · ${esc(c.model)} → ${esc(c.reply)}</div>`
+        : `<div style="color:#b91c1c">✗ <b>Cloud</b> · ${esc(c.model)} — ${esc(c.error)}</div>`);
     }
+    if (r.local_result) {
+      const l = r.local_result;
+      rows.push(l.ok
+        ? `<div style="color:#16a34a">✓ <b>Local</b> · ${esc(l.model)} → ${esc(l.reply)}</div>`
+        : `<div style="color:#b91c1c">✗ <b>Local</b> · ${esc(l.model)} — ${esc(l.error)}<br/><span style="font-size:11px">Is Ollama running? Run <code>ollama serve</code> and <code>ollama pull ${esc(l.model||"llama3.2:3b")}</code></span></div>`);
+    }
+    // Fallback for cloud-only response
+    if (!rows.length) {
+      rows.push(r.ok
+        ? `<div style="color:#16a34a">✓ ${esc(r.provider||'?')} · ${esc(r.model||'?')} → ${esc(r.reply||'')}</div>`
+        : `<div style="color:#b91c1c">✗ ${esc(r.error||'failed')}</div>`);
+    }
+    out.innerHTML = rows.join("");
   } catch (e) {
-    $("#provider-status").innerHTML = `<span style="color:#b91c1c">Error: ${esc(e.message)}</span>`;
+    out.innerHTML = `<span style="color:#b91c1c">Error: ${esc(e.message)}</span>`;
   }
 });
 
@@ -873,3 +946,16 @@ document.querySelectorAll(".sidebar a").forEach(a => a.addEventListener("click",
 
 // Also call on first load
 loadTimeframes();
+
+/* ============================== Translate existing questions to English ============================== */
+$("#translate-bank-btn")?.addEventListener("click", async () => {
+  if (!confirm("Translate every non-English question in your library to English? This calls the LLM once per non-English question and may take a minute on large libraries.")) return;
+  $("#seed-status").textContent = "Translating…";
+  try {
+    const r = await API.post("/questions/translate-to-english", {});
+    $("#seed-status").textContent = `Translated ${r.translated} of ${r.total} questions (${r.skipped} already in English).`;
+    loadAnswerBank();
+  } catch (e) {
+    $("#seed-status").textContent = "Error: " + e.message;
+  }
+});

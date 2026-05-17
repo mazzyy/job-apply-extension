@@ -24,6 +24,10 @@ class Profile(Base):
     languages = Column(Text)                            # JSON list of {lang, level}
     salary_expectation = Column(String(200))
     notice_period = Column(String(100))
-    extra_json = Column(Text)                           # catch-all for custom field answers
+    salutation = Column(String(40))                    # Mr / Ms / Mx / Dr / Prof / ...
+    nobility_title = Column(String(80))                # e.g. Dr., Prof. Dr.
+    gender = Column(String(40))                        # Male / Female / Non-binary / Prefer not to say
+    eu_work_auth = Column(String(20))                  # Yes / No — EU work authorization specific
+    extra_json = Column(Text)                          # catch-all for custom field answers
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
