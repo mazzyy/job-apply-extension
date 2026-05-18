@@ -793,8 +793,10 @@ async function loadProviderSettings(){
   document.querySelectorAll("input[name=provider]").forEach(r => {
     r.checked = (r.value === mode);
   });
-  if ($("#local-model")) $("#local-model").value = s.local_model || "llama3.2:3b";
   if ($("#local-base-url")) $("#local-base-url").value = s.local_base_url || "http://localhost:11434/v1";
+  // Local-model dropdown is populated by loadLocalModels(). We pass the currently-saved
+  // model so it stays selected once the real list loads.
+  await loadLocalModels(s.local_model);
 
   // Build per-task grid
   const grid = $("#per-task-grid");
@@ -959,3 +961,54 @@ $("#translate-bank-btn")?.addEventListener("click", async () => {
     $("#seed-status").textContent = "Error: " + e.message;
   }
 });
+
+
+async function loadLocalModels(preferred = null){
+  const sel = $("#local-model");
+  const hint = $("#local-models-hint");
+  if (!sel) return;
+  sel.innerHTML = `<option value="">loading…</option>`;
+  try {
+    const r = await API.get("/settings/local-models");
+    if (!r.available) {
+      sel.innerHTML = `<option value="">— Ollama not reachable —</option>`;
+      if (preferred) {
+        const opt = document.createElement("option");
+        opt.value = preferred; opt.textContent = preferred + " (last used)";
+        opt.selected = true;
+        sel.appendChild(opt);
+      }
+      const diag = r.diagnostics ? `<details style="margin-top:4px"><summary style="cursor:pointer;font-size:10px">diagnostic details</summary><pre style="font-size:10px;background:#f1f5f9;padding:6px;border-radius:4px;white-space:pre-wrap;word-break:break-word">${esc(JSON.stringify(r.diagnostics, null, 2))}</pre></details>` : "";
+      if (hint) hint.innerHTML = `<span style="color:#b91c1c">Couldn't reach Ollama. <b>Error:</b> ${esc(r.error || "(unknown)")}.<br/>Tried: <code>${esc(r.base_url||"")}</code></span>${diag}`;
+      return;
+    }
+    if (!r.models.length) {
+      sel.innerHTML = `<option value="">— no models installed —</option>`;
+      if (hint) hint.innerHTML = `Pull a model from a terminal: <code>ollama pull llama3.2:3b</code>`;
+      return;
+    }
+    sel.innerHTML = "";
+    r.models.forEach(m => {
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      const sz = m.size_gb ? ` (${m.size_gb} GB)` : "";
+      opt.textContent = m.name + sz;
+      if (preferred && m.id === preferred) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    // If saved preferred isn't in the list anymore, add it as "(not installed)"
+    if (preferred && !r.models.some(m => m.id === preferred)) {
+      const opt = document.createElement("option");
+      opt.value = preferred;
+      opt.textContent = preferred + " (not installed — pull it first)";
+      opt.selected = true;
+      sel.insertBefore(opt, sel.firstChild);
+    }
+    if (hint) hint.textContent = `${r.models.length} model${r.models.length===1?"":"s"} installed locally.`;
+  } catch (e) {
+    sel.innerHTML = `<option value="">error</option>`;
+    if (hint) hint.textContent = "Error: " + e.message;
+  }
+}
+
+$("#refresh-models")?.addEventListener("click", () => loadLocalModels($("#local-model")?.value || null));

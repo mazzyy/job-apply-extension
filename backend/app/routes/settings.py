@@ -49,3 +49,67 @@ def _to_dict(row: AppSettings) -> dict:
         "local_base_url": row.local_base_url,
         "per_task": json.loads(row.per_task) if row.per_task else {},
     }
+
+
+@router.get("/local-models")
+def list_local_models(db: Session = Depends(get_db)):
+    """Return the models actually installed in the user's Ollama.
+    Tries both localhost and 127.0.0.1 to bypass IPv4/IPv6 + DNS issues, and
+    disables proxy environment variables so a system VPN/proxy doesn't intercept
+    the localhost call."""
+    import httpx, os
+    row = db.query(AppSettings).first()
+    if not row:
+        row = AppSettings(); db.add(row); db.commit(); db.refresh(row)
+    saved = (row.local_base_url or "http://localhost:11434/v1").rstrip("/")
+    if not saved.endswith("/v1") and (":11434" in saved or "ollama" in saved.lower()):
+        saved = saved + "/v1"
+
+    # Build candidates: try the user's URL first, then a couple of fallbacks.
+    candidates = [saved]
+    if "localhost" in saved:
+        candidates.append(saved.replace("localhost", "127.0.0.1"))
+    elif "127.0.0.1" in saved:
+        candidates.append(saved.replace("127.0.0.1", "localhost"))
+
+    # trust_env=False disables HTTP_PROXY / HTTPS_PROXY system vars that VPN apps
+    # often set on Mac via launchd; those would otherwise try to proxy our
+    # localhost calls through the VPN and fail.
+    errors = []
+    for base in candidates:
+        url = base + "/models"
+        try:
+            with httpx.Client(timeout=4.0, trust_env=False) as client:
+                resp = client.get(url)
+            if resp.status_code != 200:
+                errors.append(f"{url} → HTTP {resp.status_code}")
+                continue
+            data = resp.json()
+            models = []
+            for m in data.get("data", []):
+                mid = m.get("id") or m.get("name")
+                if mid: models.append({"id": mid, "name": mid})
+            # Best-effort: enrich with sizes from Ollama's native API
+            try:
+                base_root = base.rsplit("/v1", 1)[0]
+                with httpx.Client(timeout=2.0, trust_env=False) as client:
+                    tags = client.get(base_root + "/api/tags").json()
+                size_by_name = {t["name"]: t.get("size", 0) for t in tags.get("models", [])}
+                for m in models:
+                    m["size_bytes"] = size_by_name.get(m["id"], 0)
+                    if m["size_bytes"]:
+                        m["size_gb"] = round(m["size_bytes"] / 1024 / 1024 / 1024, 2)
+            except Exception:
+                pass
+            return {"available": True, "base_url": base, "models": models,
+                    "diagnostics": {"tried": candidates, "succeeded": base}}
+        except Exception as e:
+            errors.append(f"{url} → {type(e).__name__}: {e}")
+    return {"available": False, "base_url": saved, "models": [],
+            "error": " | ".join(errors),
+            "diagnostics": {"tried": candidates, "proxy_env": {
+                k: os.environ.get(k) for k in ("HTTP_PROXY","HTTPS_PROXY","ALL_PROXY","NO_PROXY",
+                                                "http_proxy","https_proxy","all_proxy","no_proxy")
+                if os.environ.get(k)
+            }}}
+

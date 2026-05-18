@@ -78,11 +78,21 @@ def _cloud_client() -> AzureOpenAI:
 
 
 def _local_client() -> OpenAI:
+    """Build an OpenAI client pointed at the local LLM server (Ollama by default).
+
+    Important: passes a custom httpx.Client with trust_env=False so any HTTP_PROXY
+    set on the user's system (often by VPN apps via launchd on macOS) doesn't
+    intercept our localhost calls and fail them as 'Connection error'.
+    """
+    import httpx
     row = _get_settings_row()
-    base_url = row.local_base_url or "http://localhost:11434/v1"
+    base_url = (row.local_base_url or "http://localhost:11434/v1").rstrip("/")
+    if not base_url.endswith("/v1") and (":11434" in base_url or "ollama" in base_url.lower()):
+        base_url = base_url + "/v1"
     key = "local::" + base_url
     if key not in _clients:
-        _clients[key] = OpenAI(api_key="ollama", base_url=base_url)
+        http_client = httpx.Client(trust_env=False, timeout=60.0)
+        _clients[key] = OpenAI(api_key="ollama", base_url=base_url, http_client=http_client)
     return _clients[key]
 
 

@@ -63,18 +63,58 @@ fn find_free_port() -> u16 {
 }
 
 fn resolve_bundled_binary(resource_dir: &Option<PathBuf>) -> Option<PathBuf> {
+    // Tauri puts bundled files in different paths depending on platform + config:
+    //   macOS:   .app/Contents/Resources/<thing>
+    //   Windows: <app dir>/resources/<thing>
+    //   Linux:   /usr/share/<app>/resources/<thing>
+    //
+    // And when we declare ["resources/**/*"] in tauri.conf.json, the directory
+    // structure under src-tauri/ is preserved — so files end up under a nested
+    // `resources/` subfolder inside the platform's resource_dir.
+    //
+    // So we try multiple candidate paths and log which one we found.
     let resource_dir = resource_dir.as_ref()?;
     let exe_name = if cfg!(windows) {
         "jobapply-backend.exe"
     } else {
         "jobapply-backend"
     };
-    let candidate = resource_dir.join("backend").join(exe_name);
-    if candidate.exists() {
-        Some(candidate)
-    } else {
-        None
+
+    let candidates = vec![
+        // Tauri 2.x typical layout with glob-included resources
+        resource_dir.join("resources").join("backend").join(exe_name),
+        // Flat layout (in case config changes / Tauri 1.x style)
+        resource_dir.join("backend").join(exe_name),
+        // macOS sometimes puts things one level up
+        resource_dir.join("_up_").join("backend").join(exe_name),
+        resource_dir.join("_up_").join("resources").join("backend").join(exe_name),
+    ];
+
+    for path in &candidates {
+        eprintln!("[JAA] checking bundled-backend path: {}", path.display());
+        if path.exists() {
+            eprintln!("[JAA] ✓ Found bundled backend at: {}", path.display());
+            return Some(path.clone());
+        }
     }
+    eprintln!("[JAA] ✗ Bundled backend not found in any of {} candidate paths", candidates.len());
+    eprintln!("[JAA]   resource_dir was: {}", resource_dir.display());
+    // Walk the resource_dir up to 2 levels deep so we see what IS there
+    fn walk(dir: &std::path::Path, depth: usize, max: usize) {
+        if depth > max { return; }
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for e in entries.flatten().take(40) {
+                let p = e.path();
+                let prefix = "  ".repeat(depth + 1);
+                eprintln!("[JAA] {}{}", prefix, p.display());
+                if p.is_dir() && depth < max {
+                    walk(&p, depth + 1, max);
+                }
+            }
+        }
+    }
+    walk(resource_dir, 0, 2);
+    None
 }
 
 fn resolve_dev_backend() -> Option<PathBuf> {

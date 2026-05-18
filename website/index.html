@@ -364,13 +364,13 @@
 
       <div id="local-config" style="margin-top:10px">
         <label>Local model
-          <select id="local-model">
-            <option value="llama3.2:3b">Llama 3.2 3B (~2 GB, lightest)</option>
-            <option value="llama3.2:1b">Llama 3.2 1B (~1.3 GB, smallest)</option>
-            <option value="qwen2.5:7b">Qwen 2.5 7B (~4.4 GB, best quality)</option>
-            <option value="phi3:mini">Phi-3 mini (~2.4 GB)</option>
-            <option value="mistral:7b">Mistral 7B (~4.4 GB)</option>
-          </select>
+          <div style="display:flex;gap:6px;align-items:center">
+            <select id="local-model" style="flex:1">
+              <option value="">— refresh to load —</option>
+            </select>
+            <button type="button" id="refresh-models" class="secondary" style="margin:0">↻ refresh</button>
+          </div>
+          <div id="local-models-hint" class="muted" style="margin-top:4px;font-size:11px"></div>
         </label>
         <label>Local server base URL
           <input id="local-base-url" type="url" placeholder="http://localhost:11434/v1"/>
