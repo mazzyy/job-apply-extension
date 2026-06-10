@@ -304,6 +304,15 @@ refreshHeader();
 setInterval(refreshHeader, 30000);
 
 /* ============================== Easy Apply guided ============================== */
+// Live progress from the content script while Easy Apply runs
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.type === "EASYAPPLY_PROGRESS") {
+    const st = $("#action-status");
+    if (st) setLoadingStatus(st,
+      `Step ${msg.step}${msg.note ? " · " + msg.note.slice(0, 28) : ""} — ${msg.filled} fields filled…`);
+  }
+});
+
 $("#easyapply-btn")?.addEventListener("click", async () => {
   const status = $("#action-status");
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -326,6 +335,13 @@ $("#easyapply-btn")?.addEventListener("click", async () => {
       renderEasyApplyAnswers(r.answered || []);
     } else if (r.stopped === "required_field_blank") {
       setStatus(status, `Stopped at a step with required blank fields (highlighted). Fill them and click Next.`, "warn");
+    } else if (r.stopped === "validation_error") {
+      const first = (r.validation_errors || [])[0] || "";
+      setStatus(status, `LinkedIn rejected some answers${first ? ` ("${first.slice(0, 60)}")` : ""}. Fix the highlighted fields in the modal, then click Next.`, "warn");
+    } else if (r.stopped === "modal_closed") {
+      setStatus(status, "The Easy Apply window closed before finishing.", "warn");
+    } else if (r.stopped === "backend_error") {
+      setStatus(status, "Backend error while answering questions — check that it's running, then retry.", "err");
     } else {
       setStatus(status, `Stopped: ${r.stopped || "unknown"} (filled ${r.filled||0})`, "warn");
     }
@@ -402,8 +418,16 @@ $("#copy-msg")?.addEventListener("click", async () => {
   setStatus($("#msg-status"), "Copied to clipboard.", "ok");
 });
 
-/* ---------- Chat ---------- */
-let chatContext = null;   // current page/job payload sent with each message
+/* ---------- Chat (threads + streaming) ---------- */
+let chatContext = null;
+let activeThreadId = null;
+
+async function getApiBase(){
+  try {
+    const { apiBase } = await chrome.storage.sync.get("apiBase");
+    return apiBase || "http://localhost:8000";
+  } catch { return "http://localhost:8000"; }
+}
 
 function renderChatMessages(msgs){
   const box = $("#chat-messages");
@@ -415,16 +439,37 @@ function renderChatMessages(msgs){
   box.scrollTop = box.scrollHeight;
 }
 
+async function loadThreads(){
+  try {
+    const r = await chrome.runtime.sendMessage({ type: "API_GET", path: "/chat/threads" });
+    if (!r?.ok) return;
+    const threads = r.data || [];
+    if (activeThreadId === null && threads.length) activeThreadId = threads[0].id;
+    const box = $("#chat-threads");
+    box.innerHTML = `<button class="thread-chip new" id="thread-new" title="New chat">+ New</button>` +
+      threads.map(t => `
+        <button class="thread-chip ${t.id === activeThreadId ? "active" : ""}" data-tid="${t.id}"
+          title="${esc(t.title)}${t.message_count ? " · " + t.message_count + " messages" : ""}">${esc(t.title)}</button>`).join("");
+    $("#thread-new")?.addEventListener("click", async () => {
+      const r = await chrome.runtime.sendMessage({ type: "API_POST", path: "/chat/threads", body: {} });
+      if (r?.ok) { activeThreadId = r.data.id; await loadThreads(); renderChatMessages([]); }
+    });
+    $all(".thread-chip[data-tid]").forEach(c => c.addEventListener("click", async () => {
+      activeThreadId = +c.dataset.tid;
+      await loadThreads();
+      loadChat();
+    }));
+  } catch {}
+}
+
 async function refreshChatContext(){
   const ctxEl = $("#chat-context");
   try {
     const job = await extractCurrentJob();
     if (job && job.job_title) {
       chatContext = {
-        url: job.url || null,
-        job_title: job.job_title || null,
-        company: job.company || null,
-        job_description: job.job_description || null,
+        url: job.url || null, job_title: job.job_title || null,
+        company: job.company || null, job_description: job.job_description || null,
         application_id: lastApplicationId || null,
       };
       ctxEl.textContent = `Context: ${job.job_title} @ ${job.company || "?"}`;
@@ -439,9 +484,41 @@ async function refreshChatContext(){
 
 async function loadChat(){
   try {
-    const r = await chrome.runtime.sendMessage({ type: "API_GET", path: "/chat/?limit=100" });
-    if (r?.ok) renderChatMessages(r.data || []);
+    const path = "/chat/?limit=100" + (activeThreadId ? "&thread_id=" + activeThreadId : "");
+    const r = await chrome.runtime.sendMessage({ type: "API_GET", path });
+    if (r?.ok) {
+      activeThreadId = r.data.thread_id;
+      renderChatMessages(r.data.messages || []);
+    }
   } catch {}
+}
+
+/* Stream SSE from the backend, calling onDelta per token. */
+async function streamChat(payload, onMeta, onDelta){
+  const base = await getApiBase();
+  const resp = await fetch(base + "/chat/stream", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok || !resp.body) throw new Error("HTTP " + resp.status);
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n\n")) !== -1) {
+      const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+      if (!chunk.startsWith("data: ")) continue;
+      let d; try { d = JSON.parse(chunk.slice(6)); } catch { continue; }
+      if (d.thread_id) onMeta?.(d);
+      if (d.delta) onDelta(d.delta);
+      if (d.done) return d;
+    }
+  }
+  return null;
 }
 
 async function sendChat(){
@@ -452,29 +529,34 @@ async function sendChat(){
   input.style.height = "auto";
   const box = $("#chat-messages");
   box.insertAdjacentHTML("beforeend", `<div class="chat-msg user">${esc(text)}</div>`);
-  box.insertAdjacentHTML("beforeend", `<div class="chat-msg assistant chat-typing" id="chat-typing">Thinking…</div>`);
+  box.insertAdjacentHTML("beforeend", `<div class="chat-msg assistant" id="chat-live"></div>`);
+  const live = document.getElementById("chat-live");
+  live.textContent = "…";
   box.scrollTop = box.scrollHeight;
   $("#chat-send").disabled = true;
-  await refreshChatContext();  // capture whatever job page is open right now
+  await refreshChatContext();
+  const payload = { message: text, thread_id: activeThreadId, context: chatContext };
+  let acc = "";
   try {
-    const r = await chrome.runtime.sendMessage({
-      type: "API_POST", path: "/chat/",
-      body: { message: text, context: chatContext },
-    });
-    document.getElementById("chat-typing")?.remove();
-    if (r?.ok) {
-      box.insertAdjacentHTML("beforeend",
-        `<div class="chat-msg assistant">${esc(r.data.assistant?.content || "")}</div>`);
-      box.scrollTop = box.scrollHeight;
-    } else {
-      setStatus($("#chat-status"), r?.error || "Chat failed", "err");
-    }
+    await streamChat(payload,
+      meta => { if (meta.thread_id) activeThreadId = meta.thread_id; },
+      delta => {
+        acc += delta;
+        live.textContent = acc;
+        box.scrollTop = box.scrollHeight;
+      });
   } catch (e) {
-    document.getElementById("chat-typing")?.remove();
-    setStatus($("#chat-status"), e.message, "err");
+    // Fallback to the non-streaming endpoint (e.g. SSE blocked)
+    try {
+      const r = await chrome.runtime.sendMessage({ type: "API_POST", path: "/chat/", body: payload });
+      if (r?.ok) { activeThreadId = r.data.thread_id; live.textContent = r.data.assistant?.content || ""; }
+      else { live.textContent = "Error: " + (r?.error || "chat failed"); }
+    } catch (e2) { live.textContent = "Error: " + e2.message; }
   } finally {
+    live.removeAttribute("id");
     $("#chat-send").disabled = false;
     input.focus();
+    loadThreads();   // pick up auto-title
   }
 }
 
@@ -482,30 +564,31 @@ $("#chat-send")?.addEventListener("click", sendChat);
 $("#chat-input")?.addEventListener("keydown", e => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
 });
-let chatClearArmed = false;
-$("#chat-clear")?.addEventListener("click", async () => {
-  // Two-step confirm (window.confirm is unreliable in side panels)
-  if (!chatClearArmed) {
-    chatClearArmed = true;
-    setStatus($("#chat-status"), "Click the trash icon again to clear the whole conversation.", "err");
-    setTimeout(() => { chatClearArmed = false; setStatus($("#chat-status"), ""); }, 3500);
-    return;
-  }
-  chatClearArmed = false;
-  try {
-    await chrome.runtime.sendMessage({ type: "API_DELETE", path: "/chat/" });
-    renderChatMessages([]);
-    setStatus($("#chat-status"), "Conversation cleared.", "ok");
-  } catch {}
-});
-
-// Auto-grow the composer textarea up to its CSS max-height
 $("#chat-input")?.addEventListener("input", e => {
   e.target.style.height = "auto";
   e.target.style.height = Math.min(e.target.scrollHeight, 110) + "px";
 });
 
-// Keep context fresh when the user switches tabs while the panel is open
+let chatClearArmed = false;
+$("#chat-clear")?.addEventListener("click", async () => {
+  if (!chatClearArmed) {
+    chatClearArmed = true;
+    setStatus($("#chat-status"), "Click again to clear this conversation.", "err");
+    setTimeout(() => { chatClearArmed = false; setStatus($("#chat-status"), ""); }, 3500);
+    return;
+  }
+  chatClearArmed = false;
+  try {
+    await chrome.runtime.sendMessage({
+      type: "API_DELETE",
+      path: "/chat/" + (activeThreadId ? "?thread_id=" + activeThreadId : ""),
+    });
+    renderChatMessages([]);
+    setStatus($("#chat-status"), "Conversation cleared.", "ok");
+    loadThreads();
+  } catch {}
+});
+
 try {
   chrome.tabs.onActivated.addListener(() => setTimeout(refreshChatContext, 300));
   chrome.tabs.onUpdated.addListener((_id, info) => {
@@ -513,5 +596,5 @@ try {
   });
 } catch {}
 
-loadChat();
+loadThreads().then(loadChat);
 refreshChatContext();

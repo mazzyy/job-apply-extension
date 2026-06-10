@@ -196,3 +196,140 @@ def add_event(app_id: int, body: dict, db: Session = Depends(get_db)):
              detail=body.get("detail"),
              source=body.get("source", "ui"))
     return {"id": e.id}
+
+
+# ============================== Auto-apply ==============================
+import json as _json
+import re as _re
+from datetime import datetime as _dt, timedelta as _td
+from pydantic import BaseModel as _BM
+from ..models import AppSettings, ApplicationEvent
+
+
+class QueueIn(_BM):
+    urls: list[str]
+
+
+class ToggleIn(_BM):
+    enabled: bool
+    daily_cap: int | None = None
+
+
+class AutoResultIn(_BM):
+    status: str                      # applied | needs_review | failed
+    reason: str | None = None
+    filled: int = 0
+    answers: list | None = None      # [{label, value}]
+    cv_used: str | None = None
+    job_title: str | None = None
+    company: str | None = None
+
+
+@router.post("/queue")
+def queue_jobs(body: QueueIn, db: Session = Depends(get_db)):
+    """Add LinkedIn job URLs to the auto-apply queue."""
+    created, skipped = [], 0
+    for url in body.urls:
+        url = url.strip()
+        if not url or "linkedin.com/jobs" not in url:
+            skipped += 1
+            continue
+        # normalize: strip query params for dedupe
+        base_url = url.split("?")[0].rstrip("/")
+        exists = db.query(Application).filter(Application.url.like(base_url + "%")).first()
+        if exists and exists.status in ("queued", "applied"):
+            skipped += 1
+            continue
+        a = Application(url=url, source="auto-apply", status="queued", job_title=None, company=None)
+        db.add(a); db.commit(); db.refresh(a)
+        created.append(a.id)
+    return {"queued": len(created), "skipped": skipped, "ids": created}
+
+
+@router.get("/auto-apply/status")
+def auto_apply_status(db: Session = Depends(get_db)):
+    row = db.query(AppSettings).first()
+    if not row:
+        row = AppSettings(); db.add(row); db.commit(); db.refresh(row)
+    today_start = _dt.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    applied_today = (db.query(ApplicationEvent)
+                     .filter(ApplicationEvent.kind == "auto_applied",
+                             ApplicationEvent.created_at >= today_start).count())
+    queued = db.query(Application).filter(Application.status == "queued").count()
+    nxt = (db.query(Application).filter(Application.status == "queued")
+           .order_by(Application.id.asc()).first())
+    cap = row.auto_apply_daily_cap or 15
+    return {
+        "enabled": bool(row.auto_apply_enabled),
+        "daily_cap": cap,
+        "applied_today": applied_today,
+        "queued": queued,
+        "cap_reached": applied_today >= cap,
+        "next": ({"id": nxt.id, "url": nxt.url} if nxt and bool(row.auto_apply_enabled)
+                 and applied_today < cap else None),
+    }
+
+
+@router.post("/auto-apply/toggle")
+def auto_apply_toggle(body: ToggleIn, db: Session = Depends(get_db)):
+    row = db.query(AppSettings).first()
+    if not row:
+        row = AppSettings(); db.add(row)
+    row.auto_apply_enabled = 1 if body.enabled else 0
+    if body.daily_cap:
+        row.auto_apply_daily_cap = max(1, min(body.daily_cap, 100))
+    db.commit()
+    return {"ok": True, "enabled": bool(row.auto_apply_enabled)}
+
+
+@router.post("/{app_id}/auto-result")
+def auto_apply_result(app_id: int, body: AutoResultIn, db: Session = Depends(get_db)):
+    """Record the outcome of one automated application run."""
+    a = db.query(Application).filter(Application.id == app_id).first()
+    if not a:
+        raise HTTPException(404, "Application not found")
+    if body.job_title: a.job_title = body.job_title
+    if body.company: a.company = body.company
+    a.status = {"applied": "applied", "needs_review": "needs_review", "failed": "failed"}.get(body.status, "failed")
+    detail = _json.dumps({
+        "answers": body.answers or [], "cv_used": body.cv_used,
+        "filled": body.filled, "reason": body.reason,
+    }, ensure_ascii=False)
+    ev = ApplicationEvent(
+        application_id=a.id,
+        kind="auto_applied" if body.status == "applied" else "auto_apply_" + body.status,
+        title=(f"Auto-applied · {body.filled} fields · CV: {body.cv_used or '—'}"
+               if body.status == "applied" else f"Auto-apply {body.status}: {body.reason or ''}"[:290]),
+        detail=detail, source="auto-apply",
+    )
+    db.add(ev); db.commit()
+    return {"ok": True, "status": a.status}
+
+
+@router.get("/auto-apply/log")
+def auto_apply_log(limit: int = 50, db: Session = Depends(get_db)):
+    """Everything auto-apply has touched, newest first, with per-job fill details."""
+    rows = (db.query(Application)
+            .filter((Application.source == "auto-apply") |
+                    Application.status.in_(("queued", "needs_review", "failed")))
+            .order_by(Application.id.desc()).limit(limit).all())
+    out = []
+    for a in rows:
+        ev = (db.query(ApplicationEvent)
+              .filter(ApplicationEvent.application_id == a.id,
+                      ApplicationEvent.kind.in_(("auto_applied", "auto_apply_needs_review", "auto_apply_failed")))
+              .order_by(ApplicationEvent.id.desc()).first())
+        detail = {}
+        if ev and ev.detail:
+            try: detail = _json.loads(ev.detail)
+            except Exception: detail = {}
+        out.append({
+            "id": a.id, "job_title": a.job_title, "company": a.company,
+            "url": a.url, "status": a.status,
+            "updated_at": a.updated_at.isoformat() if a.updated_at else None,
+            "filled": detail.get("filled", 0),
+            "cv_used": detail.get("cv_used"),
+            "answers": detail.get("answers", []),
+            "reason": detail.get("reason"),
+        })
+    return out

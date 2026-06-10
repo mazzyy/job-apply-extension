@@ -34,4 +34,8 @@ class AppSettings(Base):
     gmail_last_sync_at = Column(DateTime, nullable=True)
     gmail_last_error = Column(Text, nullable=True)
 
+    # Auto-apply (LinkedIn Easy Apply automation)
+    auto_apply_enabled = Column(Integer, default=0)     # 0/1
+    auto_apply_daily_cap = Column(Integer, default=15)
+
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

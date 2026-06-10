@@ -1071,13 +1071,20 @@ document.querySelectorAll(".sidebar a").forEach(a => a.addEventListener("click",
 loadAzureFields();
 
 
-/* ---------- Chat (synced with extension via shared backend) ---------- */
+/* ---------- Chat (ChatGPT-style sidebar + streaming) ---------- */
 let chatPollTimer = null;
 let chatLastId = 0;
+let dashThreadId = null;
+let chatStreaming = false;   // poll must not re-render while a reply is streaming
+let chatThreadsCache = [];
+let chatSearchQ = "";
 
 function renderChat(msgs){
   const box = $("#chat-messages");
   if (!box) return;
+  const empty = $("#chat-empty");
+  if (empty) empty.style.display = msgs.length ? "none" : "";
+  box.style.display = msgs.length ? "" : "none";
   box.innerHTML = msgs.map(m => `
     <div class="chat-msg ${m.role === "user" ? "user" : "assistant"}">${esc(m.content)}${
       m.role === "user" && m.context_job ? `<span class="chat-job">${esc(m.context_job)}</span>` : ""
@@ -1086,8 +1093,89 @@ function renderChat(msgs){
   box.scrollTop = box.scrollHeight;
 }
 
+function renderThreadList(){
+  const box = $("#chat-list");
+  if (!box) return;
+  let threads = chatThreadsCache;
+  if (chatSearchQ) {
+    const q = chatSearchQ.toLowerCase();
+    threads = threads.filter(t =>
+      (t.title || "").toLowerCase().includes(q) ||
+      (t.last_message || "").toLowerCase().includes(q));
+  }
+  if (!threads.length) {
+    box.innerHTML = `<div class="chat-list-empty">${chatSearchQ ? "No chats match." : "No chats yet."}</div>`;
+    return;
+  }
+  box.innerHTML = threads.map(t => `
+    <div class="chat-item ${t.id === dashThreadId ? "active" : ""}" data-tid="${t.id}" title="${esc(t.last_message || t.title)}">
+      <span class="t">${esc(t.title)}</span>
+      ${chatThreadsCache.length > 1 ? `<button class="x" data-del="${t.id}" title="Delete chat">✕</button>` : ""}
+    </div>`).join("");
+  $all(".chat-item[data-tid]").forEach(item => item.addEventListener("click", async e => {
+    if (e.target.closest("[data-del]")) return;
+    dashThreadId = +item.dataset.tid;
+    renderThreadList();
+    updateChatTitle();
+    loadChatMessages();
+  }));
+  $all(".chat-item .x").forEach(b => b.addEventListener("click", async () => {
+    if (!confirm("Delete this chat?")) return;
+    try { await API.del("/chat/threads/" + b.dataset.del); } catch {}
+    if (+b.dataset.del === dashThreadId) dashThreadId = null;
+    await loadChatThreads();
+    loadChatMessages();
+  }));
+}
+
+function updateChatTitle(){
+  const t = chatThreadsCache.find(x => x.id === dashThreadId);
+  $("#chat-title").textContent = t ? t.title : "Chat";
+}
+
+async function loadChatThreads(){
+  try { chatThreadsCache = await API.get("/chat/threads"); } catch { return; }
+  if (dashThreadId === null && chatThreadsCache.length) dashThreadId = chatThreadsCache[0].id;
+  renderThreadList();
+  updateChatTitle();
+}
+
+async function loadChatMessages(){
+  try {
+    const r = await API.get("/chat/?limit=200" + (dashThreadId ? "&thread_id=" + dashThreadId : ""));
+    dashThreadId = r.thread_id;
+    renderChat(r.messages || []);
+  } catch {}
+}
+
 async function loadChatTab(){
-  try { renderChat(await API.get("/chat/?limit=200")); } catch {}
+  await loadChatThreads();
+  loadChatMessages();
+}
+
+async function streamDashChat(payload, onMeta, onDelta){
+  const resp = await fetch(API.base + "/chat/stream", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok || !resp.body) throw new Error("HTTP " + resp.status);
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n\n")) !== -1) {
+      const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+      if (!chunk.startsWith("data: ")) continue;
+      let d; try { d = JSON.parse(chunk.slice(6)); } catch { continue; }
+      if (d.thread_id) onMeta?.(d);
+      if (d.delta) onDelta(d.delta);
+      if (d.done && d.message?.id) chatLastId = d.message.id;
+    }
+  }
 }
 
 async function sendDashboardChat(){
@@ -1095,38 +1183,76 @@ async function sendDashboardChat(){
   const text = (input.value || "").trim();
   if (!text) return;
   input.value = "";
+  input.style.height = "auto";
   const box = $("#chat-messages");
+  box.style.display = "";
+  const empty = $("#chat-empty"); if (empty) empty.style.display = "none";
   box.insertAdjacentHTML("beforeend", `<div class="chat-msg user">${esc(text)}</div>`);
-  box.insertAdjacentHTML("beforeend", `<div class="chat-msg assistant chat-typing" id="chat-typing">Thinking…</div>`);
+  box.insertAdjacentHTML("beforeend", `<div class="chat-msg assistant" id="dash-chat-live">…</div>`);
+  const live = document.getElementById("dash-chat-live");
   box.scrollTop = box.scrollHeight;
   $("#chat-send").disabled = true;
+  chatStreaming = true;
+  const payload = { message: text, thread_id: dashThreadId, context: null };
+  let acc = "";
   try {
-    const r = await API.post("/chat/", { message: text, context: null });
-    document.getElementById("chat-typing")?.remove();
-    box.insertAdjacentHTML("beforeend", `<div class="chat-msg assistant">${esc(r.assistant?.content || "")}</div>`);
-    if (r.assistant?.id) chatLastId = r.assistant.id;
-    box.scrollTop = box.scrollHeight;
+    await streamDashChat(payload,
+      meta => { if (meta.thread_id) dashThreadId = meta.thread_id; },
+      delta => { acc += delta; live.textContent = acc; box.scrollTop = box.scrollHeight; });
   } catch (e) {
-    document.getElementById("chat-typing")?.remove();
-    $("#chat-status").textContent = "Send failed: " + e.message;
-  } finally { $("#chat-send").disabled = false; input.focus(); }
+    try {
+      const r = await API.post("/chat/", payload);
+      dashThreadId = r.thread_id;
+      live.textContent = r.assistant?.content || "";
+      if (r.assistant?.id) chatLastId = r.assistant.id;
+    } catch (e2) { live.textContent = "Error: " + e2.message; }
+  } finally {
+    chatStreaming = false;
+    live.removeAttribute("id");
+    $("#chat-send").disabled = false;
+    input.focus();
+    loadChatThreads();   // pick up auto-title in the sidebar
+  }
 }
+
+$("#chat-new")?.addEventListener("click", async () => {
+  const r = await API.post("/chat/threads", {});
+  dashThreadId = r.id;
+  await loadChatThreads();
+  renderChat([]);
+  $("#chat-input")?.focus();
+});
+
+let chatSearchTimer = null;
+$("#chat-search")?.addEventListener("input", e => {
+  clearTimeout(chatSearchTimer);
+  chatSearchTimer = setTimeout(() => { chatSearchQ = e.target.value.trim(); renderThreadList(); }, 150);
+});
 
 $("#chat-send")?.addEventListener("click", sendDashboardChat);
 $("#chat-input")?.addEventListener("keydown", e => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendDashboardChat(); }
 });
+$("#chat-input")?.addEventListener("input", e => {
+  e.target.style.height = "auto";
+  e.target.style.height = Math.min(e.target.scrollHeight, 140) + "px";
+});
 $("#chat-clear")?.addEventListener("click", async () => {
-  if (!confirm("Clear the whole conversation (extension too)?")) return;
-  try { await API.del("/chat/"); renderChat([]); } catch {}
+  if (!confirm("Clear this conversation?")) return;
+  try {
+    await API.del("/chat/" + (dashThreadId ? "?thread_id=" + dashThreadId : ""));
+    renderChat([]); loadChatThreads();
+  } catch {}
 });
 
-// Poll for new messages (e.g. sent from the extension) while the Chat tab is open
+// Poll for messages sent from the extension while the Chat tab is open
 function startChatPoll(){
   stopChatPoll();
   chatPollTimer = setInterval(async () => {
+    if (chatStreaming || document.getElementById("dash-chat-live")) return;
     try {
-      const msgs = await API.get("/chat/?limit=200");
+      const r = await API.get("/chat/?limit=200" + (dashThreadId ? "&thread_id=" + dashThreadId : ""));
+      const msgs = r.messages || [];
       if (msgs.length && msgs[msgs.length - 1].id !== chatLastId) renderChat(msgs);
     } catch {}
   }, 5000);
@@ -1137,7 +1263,6 @@ $all(".sidebar a").forEach(a => a.addEventListener("click", () => {
   if (a.dataset.tab === "chat") { loadChatTab(); startChatPoll(); }
   else stopChatPoll();
 }));
-
 
 /* ============================== Gmail · job responses ============================== */
 const KIND_LABELS = {
@@ -1354,4 +1479,81 @@ $("#inbox-company")?.addEventListener("change", e => {
 
 $all(".sidebar a").forEach(a => a.addEventListener("click", () => {
   if (a.dataset.tab === "inbox") refreshGmail();
+}));
+
+
+/* ============================== Auto-apply ============================== */
+let aaEnabled = false;
+let aaPollTimer = null;
+
+async function refreshAutoApply(){
+  let st;
+  try { st = await API.get("/applications/auto-apply/status"); } catch { return; }
+  aaEnabled = st.enabled;
+  const btn = $("#aa-toggle");
+  btn.textContent = st.enabled ? "Stop" : "Start";
+  btn.className = st.enabled ? "btn secondary" : "btn";
+  $("#aa-cap").value = st.daily_cap;
+  $("#aa-stats").innerHTML = `
+    <div class="aa-stat"><b>${st.queued}</b> queued</div>
+    <div class="aa-stat"><b>${st.applied_today}</b> applied today ${st.cap_reached ? "· <span style='color:#b91c1c'>cap reached</span>" : ""}</div>
+    <div class="aa-stat">${st.enabled ? "<span style='color:#15803d'>● running — keep Chrome open</span>" : "<span style='color:#94a3b8'>○ stopped</span>"}</div>`;
+  loadAutoApplyLog();
+}
+
+async function loadAutoApplyLog(){
+  let rows;
+  try { rows = await API.get("/applications/auto-apply/log?limit=50"); } catch { return; }
+  const box = $("#aa-log");
+  if (!rows.length) { box.innerHTML = '<div class="muted">Nothing yet — queue some jobs above.</div>'; return; }
+  box.innerHTML = rows.map(r => `
+    <div class="aa-row" data-id="${r.id}">
+      <div class="aa-row-top">
+        <span class="aa-title">${esc(r.job_title || r.url || "?")}${r.company ? " · " + esc(r.company) : ""}</span>
+        <span class="aa-badge aa-${esc(r.status)}">${esc(r.status.replace("_", " "))}</span>
+      </div>
+      <div class="aa-meta">
+        ${r.filled ? r.filled + " fields filled" : ""}${r.cv_used ? " · CV: " + esc(r.cv_used) : ""}
+        ${r.reason ? " · " + esc(r.reason) : ""}${r.updated_at ? " · " + new Date(r.updated_at).toLocaleString() : ""}
+      </div>
+      <div class="aa-detail">
+        ${r.url ? `<div style="margin-bottom:6px;"><a href="${esc(r.url)}" target="_blank">Open job on LinkedIn →</a></div>` : ""}
+        ${(r.answers || []).length ? `<table>${r.answers.map(a =>
+          `<tr><td>${esc(a.label)}</td><td>${esc(String(a.value))}</td></tr>`).join("")}</table>`
+          : '<span class="muted">No screening answers were needed.</span>'}
+      </div>
+    </div>`).join("");
+  $all(".aa-row").forEach(row => row.addEventListener("click", e => {
+    if (e.target.closest("a")) return;
+    row.classList.toggle("open");
+  }));
+}
+
+$("#aa-toggle")?.addEventListener("click", async () => {
+  try {
+    await API.post("/applications/auto-apply/toggle", {
+      enabled: !aaEnabled, daily_cap: +$("#aa-cap").value || 15,
+    });
+  } catch {}
+  refreshAutoApply();
+});
+
+$("#aa-queue")?.addEventListener("click", async () => {
+  const urls = $("#aa-urls").value.split("\n").map(u => u.trim()).filter(Boolean);
+  if (!urls.length) return;
+  const st = $("#aa-queue-status");
+  try {
+    const r = await API.post("/applications/queue", { urls });
+    st.textContent = `${r.queued} queued${r.skipped ? `, ${r.skipped} skipped (not LinkedIn job URLs or already queued/applied)` : ""}.`;
+    $("#aa-urls").value = "";
+    refreshAutoApply();
+  } catch (e) { st.textContent = "Failed: " + e.message; }
+});
+
+function startAaPoll(){ stopAaPoll(); aaPollTimer = setInterval(refreshAutoApply, 10000); }
+function stopAaPoll(){ if (aaPollTimer) { clearInterval(aaPollTimer); aaPollTimer = null; } }
+
+$all(".sidebar a").forEach(a => a.addEventListener("click", () => {
+  if (a.dataset.tab === "autoapply") { refreshAutoApply(); startAaPoll(); }
+  else stopAaPoll();
 }));

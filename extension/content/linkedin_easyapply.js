@@ -88,6 +88,93 @@
     return true;
   }
 
+  /* ------------ Value sanitization ------------ */
+  function sanitizeForInput(val, inputType, maxLength) {
+    if (val === null || val === undefined) return val;
+    let v = String(val).trim();
+    if (inputType === "number") {
+      // AI sometimes answers "5 years" / "ca. 3" — extract the first number
+      const m = v.match(/-?\d+([.,]\d+)?/);
+      if (!m) return null;
+      v = m[0].replace(",", ".");
+      // LinkedIn numeric fields usually want whole numbers
+      if (/^\d+\.0*$/.test(v)) v = String(parseInt(v, 10));
+    }
+    if (maxLength && v.length > maxLength) v = v.slice(0, maxLength);
+    return v;
+  }
+
+  /* ------------ Typeahead / combobox (City, Location, …) ------------ */
+  function isTypeahead(el) {
+    if (el.tagName !== "INPUT") return false;
+    return el.getAttribute("role") === "combobox" ||
+           el.getAttribute("aria-autocomplete") === "list" ||
+           /search-typeahead|basic-typeahead|typeahead/i.test(el.className || "") ||
+           !!el.closest("[data-test-single-typeahead-entity-form-component], .search-basic-typeahead");
+  }
+
+  async function fillTypeahead(el, value) {
+    // Type the value, wait for LinkedIn's suggestion list, click the best option.
+    setVal(el, value);
+    el.focus();
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+    let options = [];
+    try {
+      options = await waitFor(() => {
+        const opts = $all("[role='listbox'] [role='option'], .basic-typeahead__triggered-content li, .search-typeahead-v2__hit");
+        return opts.filter(visible).length ? opts.filter(visible) : null;
+      }, "typeahead options", 3500);
+    } catch { /* no dropdown — leave typed text */ }
+    if (options && options.length) {
+      const vl = value.toLowerCase();
+      const best = options.find(o => (o.innerText || "").toLowerCase().includes(vl)) || options[0];
+      best.click();
+      await wait(250);
+    }
+    return true;
+  }
+
+  /* ------------ Required checkboxes (consents, terms) ------------ */
+  function tickRequiredCheckboxes(modal) {
+    let ticked = 0;
+    $all("input[type='checkbox']", modal).filter(visible).forEach(cb => {
+      if (cb.checked) return;
+      const required = cb.required || cb.getAttribute("aria-required") === "true" ||
+        !!cb.closest("fieldset")?.querySelector("[class*='required']");
+      const label = labelOf(cb).toLowerCase();
+      const isConsent = /\b(agree|consent|terms|privacy|policy|acknowledge|confirm|zustimm|datenschutz|einverstanden)\b/i.test(label);
+      // Only auto-tick when it's clearly a required consent — never marketing opt-ins
+      const isMarketing = /\b(newsletter|updates|marketing|promotional|news)\b/i.test(label);
+      if (required && isConsent && !isMarketing) {
+        cb.click();
+        cb.dispatchEvent(new Event("change", { bubbles: true }));
+        ticked++;
+        log("ticked required consent:", label.slice(0, 60));
+      }
+    });
+    return ticked;
+  }
+
+  /* ------------ Inline validation errors ------------ */
+  function getValidationErrors(modal) {
+    return $all(
+      ".artdeco-inline-feedback--error .artdeco-inline-feedback__message, " +
+      ".artdeco-inline-feedback__message, [data-test-form-element-error-messages] *, " +
+      ".fb-dash-form-element-error, [role='alert']", modal)
+      .filter(visible)
+      .map(e => (e.innerText || "").trim())
+      .filter(t => t && t.length > 2 && t.length < 200);
+  }
+
+  function reportProgress(step, filled, note) {
+    try {
+      chrome.runtime.sendMessage({
+        type: "EASYAPPLY_PROGRESS",
+        step, filled, note: note || "",
+      });
+    } catch {}
+  }
+
   /* ------------ Label discovery ------------ */
   function labelOf(el) {
     if (el.getAttribute("aria-label")) return el.getAttribute("aria-label").trim();
@@ -330,12 +417,33 @@
       const maxLength = (el.maxLength && el.maxLength > 0) ? el.maxLength : null;
       log("field detected", { label, inputType, maxLength, options });
 
+      // 0. Typeahead fields (City, Location): use profile, commit via dropdown
+      if (isTypeahead(el)) {
+        const tv = profileLookup(label, ctx.profile);
+        if (tv) {
+          await fillTypeahead(el, String(tv));
+          results.filled++;
+          log("✓ typeahead", label, "←", tv);
+        } else {
+          const required = el.required || el.getAttribute("aria-required") === "true";
+          (required ? results.required_blank : results.missing).push(label.slice(0, 80));
+        }
+        continue;
+      }
+
       // 1. Direct profile match for plain text/textarea ONLY
       let val = null;
       let source = null;
       if (inputType === "text" || inputType === "textarea") {
         val = profileLookup(label, ctx.profile);
         if (val) source = "profile";
+      }
+
+      // 1b. Same question already answered this run (LinkedIn repeats fields)
+      if ((val === null || val === undefined || val === "") && ctx.answerCache?.has(label)) {
+        val = ctx.answerCache.get(label);
+        source = "cache";
+        log("cache hit", label, "←", val);
       }
 
       // 2. Type-aware backend answer
@@ -350,6 +458,7 @@
           if (r && r.value !== null && r.value !== undefined && String(r.value).length > 0) {
             val = r.value;
             source = "ai";
+            ctx.answerCache?.set(label, r.value);
             results.answered.push({ label, value: r.value, needs_review: r.needs_review, qid: r.question_id });
           } else if (!r) {
             log("typed-answer FAILED — likely backend error. Check backend logs.");
@@ -361,6 +470,7 @@
         }
       }
 
+      val = sanitizeForInput(val, inputType, maxLength);
       if (val !== null && val !== undefined && String(val).length > 0) {
         const ok = setVal(el, val);
         if (ok) {
@@ -419,19 +529,21 @@
   }
 
   async function pickFirstResume(modal) {
-    // Resume step: LinkedIn lists previously-uploaded resumes; click the first selectable
+    // Resume step: LinkedIn lists previously-uploaded resumes; click the first selectable.
+    // Returns the visible name of the resume that ends up selected (or null).
     const radios = $all("input[type='radio'][name*='resume'], input[type='radio'][value*='resume']", modal);
-    if (radios[0] && !radios[0].checked) {
-      radios[0].click();
-      return true;
-    }
-    // Alternatively, click "Choose existing" cards
-    const cards = $all(".jobs-resume-picker__resume, [data-test-resume-card]", modal);
-    if (cards[0] && !cards[0].classList.contains("active")) {
-      cards[0].click();
-      return true;
-    }
-    return false;
+    if (radios[0] && !radios[0].checked) radios[0].click();
+    const cards = $all(".jobs-resume-picker__resume, [data-test-resume-card], .jobs-document-upload-redesign-card__container", modal);
+    if (!radios.length && cards[0] && !cards[0].classList.contains("active")) cards[0].click();
+    await wait(250);
+    // Read the selected resume's filename
+    const sel = modal.querySelector(
+      "input[type='radio'][name*='resume']:checked, " +
+      ".jobs-resume-picker__resume--selected, [data-test-resume-card].active, " +
+      ".jobs-document-upload-redesign-card__container--selected");
+    const wrap = sel?.closest("label, .jobs-resume-picker__resume, [data-test-resume-card], .jobs-document-upload-redesign-card__container") || sel;
+    const name = (wrap?.innerText || "").split("\n").find(l => /\.(pdf|docx?)\b/i.test(l) || l.trim().length > 3);
+    return name ? name.trim().slice(0, 120) : null;
   }
 
   /* ------------ Banner ------------ */
@@ -533,7 +645,7 @@
     }
 
     const profile = await getProfile();
-    const ctx = { profile, applicationId };
+    const ctx = { profile, applicationId, answerCache: new Map() };
 
     // 4. Walk steps until Submit appears
     showBanner(modal, "<span>● Filling Easy Apply…</span>");
@@ -544,9 +656,10 @@
       const heading = getStepHeading(modal);
       log("step", step, "heading:", heading);
 
-      // Resume step — pick existing
-      if (/resume|cv/i.test(heading)) {
-        await pickFirstResume(modal);
+      // Resume step — pick existing + remember which CV was used
+      if (/resume|cv/i.test(heading) || modal.querySelector("input[type='radio'][name*='resume'], .jobs-resume-picker__resume")) {
+        const cvName = await pickFirstResume(modal);
+        if (cvName) result.cv_used = cvName;
       }
       // Fill text inputs + selects
       const fr = await fillTextInputs(modal, ctx);
@@ -556,6 +669,9 @@
       // Fill radio groups
       const rfilled = await fillRadioGroups(modal, ctx);
       result.filled += rfilled;
+      // Tick required consent checkboxes (never marketing opt-ins)
+      result.filled += tickRequiredCheckboxes(modal);
+      reportProgress(step + 1, result.filled, heading);
       // Track blanks
       if (fr.required_blank.length) result.blanks.push(...fr.required_blank);
       // If every field on this step failed via API errors, stop with a clear message
@@ -575,7 +691,38 @@
         break;
       }
       if (kind === "submit") {
-        // STOP — leave the Submit button for the user
+        // FULL AUTOMATION: submit only when nothing needs human input
+        if (options.autoSubmit) {
+          if (result.blanks.length === 0) {
+            showBanner(modal, "<b>Submitting application…</b>", "info");
+            btn.click();
+            // Wait for LinkedIn's confirmation (post-apply dialog / toast)
+            let confirmed = false;
+            try {
+              await waitFor(() => {
+                const m = getModal();
+                const txt = ((m?.innerText || "") + " " + document.body.innerText.slice(0, 3000)).toLowerCase();
+                return txt.includes("application was sent") || txt.includes("application submitted") ||
+                       txt.includes("bewerbung wurde gesendet") || !m;
+              }, "submit confirmation", 10000);
+              confirmed = true;
+            } catch {}
+            // Dismiss the post-apply modal if present
+            try {
+              const dismiss = document.querySelector(
+                "button[aria-label='Dismiss'], .artdeco-modal__dismiss, button[data-test-modal-close-btn]");
+              if (dismiss) dismiss.click();
+            } catch {}
+            result.stopped = confirmed ? "submitted" : "submit_unconfirmed";
+            result.steps = step + 1;
+            break;
+          }
+          // Blanks present — do NOT submit unattended
+          result.stopped = "needs_review";
+          result.steps = step + 1;
+          break;
+        }
+        // GUIDED (default): leave the Submit button for the user
         let msg = `<b>✓ All fields filled.</b> Review your answers above, then click <b>Submit application</b> when ready.`;
         if (result.blanks.length) {
           msg += `<br/><span style="color:#92400e;font-weight:500">Heads-up: ${result.blanks.length} required field${result.blanks.length===1?"":"s"} need your input (highlighted in yellow).</span>`;
@@ -610,6 +757,7 @@
 
       btn.click();
       // Wait for the next step to render (DOM change in modal)
+      let advanced = true;
       try {
         const before = heading;
         await waitFor(() => {
@@ -619,8 +767,25 @@
           return h && h !== before;
         }, "next step", 8000);
       } catch {
-        // Sometimes the same heading carries over with new content — give it a moment
+        advanced = false;
         await wait(800);
+      }
+
+      // LinkedIn rejected the step? Surface its inline validation errors.
+      if (!advanced) {
+        const m2 = getModal();
+        const errors = m2 ? getValidationErrors(m2) : [];
+        if (errors.length) {
+          log("validation errors:", errors);
+          showBanner(m2,
+            `<b>LinkedIn flagged ${errors.length} field${errors.length === 1 ? "" : "s"}:</b><br/>` +
+            errors.slice(0, 4).map(e => "• " + e).join("<br/>") +
+            `<br/>Fix the highlighted fields, then click Next.`, "err");
+          result.stopped = "validation_error";
+          result.validation_errors = errors;
+          result.steps = step + 1;
+          break;
+        }
       }
       result.steps = step + 1;
     }

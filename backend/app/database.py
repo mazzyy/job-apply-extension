@@ -50,6 +50,8 @@ def ensure_schema():
         ("processed_emails", "snippet", "TEXT"),
         ("processed_emails", "source", "VARCHAR(20)"),
         ("chat_messages", "thread_id", "INTEGER"),
+        ("app_settings", "auto_apply_enabled", "INTEGER DEFAULT 0"),
+        ("app_settings", "auto_apply_daily_cap", "INTEGER DEFAULT 15"),
     ]
     with engine.begin() as conn:
         for table, col, ddl in add_cols:

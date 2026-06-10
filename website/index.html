@@ -16,6 +16,7 @@
     <a href="#overview" data-tab="overview" class="active">Overview</a>
     <a href="#applications" data-tab="applications">Applications</a>
     <a href="#chat" data-tab="chat">Chat</a>
+    <a href="#autoapply" data-tab="autoapply">Auto-apply</a>
     <a href="#analytics" data-tab="analytics">Analytics</a>
     <a href="#answers" data-tab="answers">My answers (bank)</a>
     <a href="#questions" data-tab="questions">Question library</a>
@@ -113,22 +114,78 @@
   </section>
 
   <section id="tab-chat" class="tab">
+    <div class="chat-shell">
+      <aside class="chat-side">
+        <button id="chat-new" class="chat-new">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          New chat
+        </button>
+        <div class="chat-search-wrap">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="chat-search" type="search" placeholder="Search chats" autocomplete="off" />
+        </div>
+        <div class="chat-side-label">Recents</div>
+        <div id="chat-list" class="chat-list"></div>
+      </aside>
+
+      <div class="chat-main">
+        <div class="chat-main-head">
+          <span id="chat-title" class="chat-title">Chat</span>
+          <button class="btn secondary" id="chat-clear" style="padding:5px 12px;font-size:12px;">Clear</button>
+        </div>
+        <div id="chat-messages" class="chat-msgs"></div>
+        <div id="chat-empty" class="chat-greeting" style="display:none;">
+          <div class="chat-greeting-title">What can I help with?</div>
+          <div class="chat-greeting-sub">Ask about a job, your applications, screening answers, or your CV.</div>
+        </div>
+        <div class="chat-compose">
+          <textarea id="chat-input" rows="1" placeholder="Ask anything…"></textarea>
+          <button id="chat-send" class="chat-send-btn" title="Send (Enter)">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+        <div id="chat-status" class="muted" style="font-size:12px;margin-top:6px;"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-autoapply" class="tab">
+    <h1>Auto-apply · LinkedIn Easy Apply</h1>
+
     <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-        <h2 style="margin:0;">Chat</h2>
-        <button class="btn secondary" id="chat-clear">Clear conversation</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <div>
+          <h3 style="margin:0;">Automation</h3>
+          <p class="muted" style="margin:4px 0 0;font-size:12px;">
+            The extension applies to queued jobs one at a time with human-like pauses, picks your
+            LinkedIn resume, and <b>skips</b> any application whose answers need review.
+          </p>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;">
+            Daily cap <input class="input" id="aa-cap" type="number" min="1" max="100" value="15" style="width:64px;" />
+          </label>
+          <button class="btn" id="aa-toggle">Start</button>
+        </div>
       </div>
-      <p class="muted" style="margin:4px 0 10px;font-size:12.5px;">
-        Synced with the extension side panel — messages you send while browsing a job
-        (with its context) show up here too.
+      <div class="aa-stats" id="aa-stats"></div>
+      <p class="muted" style="font-size:11.5px;margin:10px 0 0;">
+        ⚠ Unattended applying is against LinkedIn's terms of service — aggressive use can get your
+        account rate-limited or restricted. Keep the cap modest and review the log daily.
       </p>
-      <div id="chat-messages" style="display:flex;flex-direction:column;gap:8px;max-height:55vh;overflow-y:auto;padding:4px 0 10px;"></div>
-      <div style="display:flex;gap:8px;align-items:flex-end;">
-        <textarea id="chat-input" rows="2" style="flex:1;resize:none;" class="input"
-          placeholder="Ask about a job, your applications, screening answers…"></textarea>
-        <button class="btn" id="chat-send">Send</button>
-      </div>
-      <div id="chat-status" class="muted" style="font-size:12px;margin-top:6px;"></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Queue jobs</h3>
+      <p class="muted" style="font-size:12.5px;">Paste LinkedIn job URLs (one per line). Only Easy Apply jobs will succeed; external-apply jobs are recorded as failed.</p>
+      <textarea id="aa-urls" rows="4" placeholder="https://www.linkedin.com/jobs/view/1234567890&#10;https://www.linkedin.com/jobs/view/0987654321"></textarea>
+      <button class="btn" id="aa-queue" style="margin-top:8px;">Add to queue</button>
+      <span id="aa-queue-status" class="muted" style="font-size:12px;margin-left:10px;"></span>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Application log</h3>
+      <div id="aa-log"></div>
     </div>
   </section>
 

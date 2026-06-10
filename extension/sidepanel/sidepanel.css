@@ -478,3 +478,24 @@ textarea.letter:focus {
 }
 .btn-icon:hover { background: var(--bg-subtle); color: var(--bad); }
 .btn-icon svg { width: 14px; height: 14px; }
+
+/* --- Chat thread tabs --- */
+.chat-threads {
+  display: flex; gap: 6px; overflow-x: auto; padding: 0 0 8px;
+  scrollbar-width: none;
+}
+.chat-threads::-webkit-scrollbar { display: none; }
+.thread-chip {
+  flex-shrink: 0; max-width: 150px;
+  padding: 5px 12px; border-radius: 999px; cursor: pointer;
+  background: var(--bg-subtle); border: 1px solid var(--border);
+  color: var(--text-muted); font: 600 11.5px/1.2 -apple-system, system-ui, sans-serif;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: all .15s;
+}
+.thread-chip:hover { border-color: var(--border-strong); color: var(--text); }
+.thread-chip.active {
+  background: var(--brand-soft); border-color: var(--brand);
+  color: var(--brand-strong);
+}
+.thread-chip.new { font-weight: 700; }
