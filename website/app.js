@@ -69,7 +69,6 @@ async function loadStats(){
   try {
     const s = await API.get("/applications/stats");
     $("#stat-total").textContent = s.total;
-    $("#stat-applied").textContent = s.applied;
     $("#stat-interview").textContent = s.interview;
     $("#stat-offer").textContent = s.offer;
     $("#stat-avg-fit").textContent = s.avg_fit;
@@ -273,8 +272,7 @@ async function loadAnalytics(){
   const f = o.funnel || {};
   const r = o.rates || {};
   $("#analytics-funnel").innerHTML = `
-    <div class="stat"><span>${f.analyzed||0}</span><label>Analyzed</label></div>
-    <div class="stat"><span>${f.applied||0}</span><label>Applied</label></div>
+    <div class="stat"><span>${f.analyzed||0}</span><label>Analyzed/applied</label></div>
     <div class="stat"><span>${f.interview||0}</span><label>Interviewing</label></div>
     <div class="stat"><span>${f.offer||0}</span><label>Offers</label></div>
     <div class="stat"><span>${r.response_rate||0}%</span><label>Response rate</label></div>`;
@@ -878,10 +876,12 @@ async function loadTimeframes(){
   try {
     const o = await API.get("/analytics/overview");
     const tf = (id, val) => { const el = $(id); if (el) el.textContent = val || 0; };
-    tf("#tf-today-applied", o.today?.applied); tf("#tf-today-analyzed", o.today?.analyzed);
-    tf("#tf-yest-applied",  o.yesterday?.applied); tf("#tf-yest-analyzed",  o.yesterday?.analyzed);
-    tf("#tf-week-applied",  o.week?.applied);  tf("#tf-week-analyzed",  o.week?.analyzed);
-    tf("#tf-month-applied", o.month?.applied); tf("#tf-month-analyzed", o.month?.analyzed);
+    // Applied can't be detected reliably — show one combined analyzed/applied count.
+    const both = t => (t?.analyzed ?? 0);
+    tf("#tf-today-count", both(o.today));
+    tf("#tf-yest-count",  both(o.yesterday));
+    tf("#tf-week-count",  both(o.week));
+    tf("#tf-month-count", both(o.month));
 
     // Build a simple 30-day bar chart
     const chart = $("#daily-chart");
@@ -1069,3 +1069,71 @@ document.querySelectorAll(".sidebar a").forEach(a => a.addEventListener("click",
 }));
 // Also on first init
 loadAzureFields();
+
+
+/* ---------- Chat (synced with extension via shared backend) ---------- */
+let chatPollTimer = null;
+let chatLastId = 0;
+
+function renderChat(msgs){
+  const box = $("#chat-messages");
+  if (!box) return;
+  box.innerHTML = msgs.map(m => `
+    <div class="chat-msg ${m.role === "user" ? "user" : "assistant"}">${esc(m.content)}${
+      m.role === "user" && m.context_job ? `<span class="chat-job">${esc(m.context_job)}</span>` : ""
+    }</div>`).join("");
+  if (msgs.length) chatLastId = msgs[msgs.length - 1].id;
+  box.scrollTop = box.scrollHeight;
+}
+
+async function loadChatTab(){
+  try { renderChat(await API.get("/chat/?limit=200")); } catch {}
+}
+
+async function sendDashboardChat(){
+  const input = $("#chat-input");
+  const text = (input.value || "").trim();
+  if (!text) return;
+  input.value = "";
+  const box = $("#chat-messages");
+  box.insertAdjacentHTML("beforeend", `<div class="chat-msg user">${esc(text)}</div>`);
+  box.insertAdjacentHTML("beforeend", `<div class="chat-msg assistant chat-typing" id="chat-typing">Thinking…</div>`);
+  box.scrollTop = box.scrollHeight;
+  $("#chat-send").disabled = true;
+  try {
+    const r = await API.post("/chat/", { message: text, context: null });
+    document.getElementById("chat-typing")?.remove();
+    box.insertAdjacentHTML("beforeend", `<div class="chat-msg assistant">${esc(r.assistant?.content || "")}</div>`);
+    if (r.assistant?.id) chatLastId = r.assistant.id;
+    box.scrollTop = box.scrollHeight;
+  } catch (e) {
+    document.getElementById("chat-typing")?.remove();
+    $("#chat-status").textContent = "Send failed: " + e.message;
+  } finally { $("#chat-send").disabled = false; input.focus(); }
+}
+
+$("#chat-send")?.addEventListener("click", sendDashboardChat);
+$("#chat-input")?.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendDashboardChat(); }
+});
+$("#chat-clear")?.addEventListener("click", async () => {
+  if (!confirm("Clear the whole conversation (extension too)?")) return;
+  try { await API.del("/chat/"); renderChat([]); } catch {}
+});
+
+// Poll for new messages (e.g. sent from the extension) while the Chat tab is open
+function startChatPoll(){
+  stopChatPoll();
+  chatPollTimer = setInterval(async () => {
+    try {
+      const msgs = await API.get("/chat/?limit=200");
+      if (msgs.length && msgs[msgs.length - 1].id !== chatLastId) renderChat(msgs);
+    } catch {}
+  }, 5000);
+}
+function stopChatPoll(){ if (chatPollTimer) { clearInterval(chatPollTimer); chatPollTimer = null; } }
+
+$all(".sidebar a").forEach(a => a.addEventListener("click", () => {
+  if (a.dataset.tab === "chat") { loadChatTab(); startChatPoll(); }
+  else stopChatPoll();
+}));

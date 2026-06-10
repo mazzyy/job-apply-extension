@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from .database import Base, engine, ensure_schema
 from .config import settings
-from .routes import cvs, analyze, applications, profile, questions, emails, analytics, settings as settings_router
+from .routes import cvs, analyze, applications, profile, questions, emails, analytics, chat, settings as settings_router
 from .services.analyzer import verify_model
 
 logging.basicConfig(
@@ -99,6 +99,7 @@ app.include_router(questions.router)
 app.include_router(emails.router)
 app.include_router(analytics.router)
 app.include_router(settings_router.router)
+app.include_router(chat.router)
 
 # Serve the dashboard alongside the API so the Tauri shell can load it from one origin.
 import os

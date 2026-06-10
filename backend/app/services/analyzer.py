@@ -26,6 +26,7 @@ HYBRID_DEFAULTS = {
     "draft_answer": "cloud",      # nuanced first-person prose
     "analyze_fit": "cloud",       # heaviest reasoning, biggest quality gap
     "cover_letter": "cloud",      # writing quality matters
+    "chat": "cloud",              # conversational quality matters
 }
 
 # Module-level client cache

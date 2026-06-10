@@ -37,6 +37,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, data: await apiFetch(msg.path, { method: "POST", body: JSON.stringify(msg.body || {}) }) });
       } else if (msg.type === "API_PATCH") {
         sendResponse({ ok: true, data: await apiFetch(msg.path, { method: "PATCH", body: JSON.stringify(msg.body || {}) }) });
+      } else if (msg.type === "API_DELETE") {
+        sendResponse({ ok: true, data: await apiFetch(msg.path, { method: "DELETE" }) });
       } else if (msg.type === "ANALYZE_JOB") {
         const data = await apiFetch("/analyze/", {
           method: "POST",

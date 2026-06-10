@@ -401,3 +401,117 @@ $("#copy-msg")?.addEventListener("click", async () => {
   await navigator.clipboard.writeText($("#linkedin-msg-text").value);
   setStatus($("#msg-status"), "Copied to clipboard.", "ok");
 });
+
+/* ---------- Chat ---------- */
+let chatContext = null;   // current page/job payload sent with each message
+
+function renderChatMessages(msgs){
+  const box = $("#chat-messages");
+  if (!box) return;
+  box.innerHTML = msgs.map(m => `
+    <div class="chat-msg ${m.role === "user" ? "user" : "assistant"}">${esc(m.content)}${
+      m.role === "user" && m.context_job ? `<span class="chat-job">${esc(m.context_job)}</span>` : ""
+    }</div>`).join("");
+  box.scrollTop = box.scrollHeight;
+}
+
+async function refreshChatContext(){
+  const ctxEl = $("#chat-context");
+  try {
+    const job = await extractCurrentJob();
+    if (job && job.job_title) {
+      chatContext = {
+        url: job.url || null,
+        job_title: job.job_title || null,
+        company: job.company || null,
+        job_description: job.job_description || null,
+        application_id: lastApplicationId || null,
+      };
+      ctxEl.textContent = `Context: ${job.job_title} @ ${job.company || "?"}`;
+      ctxEl.className = "chat-context live";
+      return;
+    }
+  } catch {}
+  chatContext = null;
+  ctxEl.textContent = "No job context — open a job page and I'll see it.";
+  ctxEl.className = "chat-context";
+}
+
+async function loadChat(){
+  try {
+    const r = await chrome.runtime.sendMessage({ type: "API_GET", path: "/chat/?limit=100" });
+    if (r?.ok) renderChatMessages(r.data || []);
+  } catch {}
+}
+
+async function sendChat(){
+  const input = $("#chat-input");
+  const text = (input.value || "").trim();
+  if (!text) return;
+  input.value = "";
+  input.style.height = "auto";
+  const box = $("#chat-messages");
+  box.insertAdjacentHTML("beforeend", `<div class="chat-msg user">${esc(text)}</div>`);
+  box.insertAdjacentHTML("beforeend", `<div class="chat-msg assistant chat-typing" id="chat-typing">Thinking…</div>`);
+  box.scrollTop = box.scrollHeight;
+  $("#chat-send").disabled = true;
+  await refreshChatContext();  // capture whatever job page is open right now
+  try {
+    const r = await chrome.runtime.sendMessage({
+      type: "API_POST", path: "/chat/",
+      body: { message: text, context: chatContext },
+    });
+    document.getElementById("chat-typing")?.remove();
+    if (r?.ok) {
+      box.insertAdjacentHTML("beforeend",
+        `<div class="chat-msg assistant">${esc(r.data.assistant?.content || "")}</div>`);
+      box.scrollTop = box.scrollHeight;
+    } else {
+      setStatus($("#chat-status"), r?.error || "Chat failed", "err");
+    }
+  } catch (e) {
+    document.getElementById("chat-typing")?.remove();
+    setStatus($("#chat-status"), e.message, "err");
+  } finally {
+    $("#chat-send").disabled = false;
+    input.focus();
+  }
+}
+
+$("#chat-send")?.addEventListener("click", sendChat);
+$("#chat-input")?.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+let chatClearArmed = false;
+$("#chat-clear")?.addEventListener("click", async () => {
+  // Two-step confirm (window.confirm is unreliable in side panels)
+  if (!chatClearArmed) {
+    chatClearArmed = true;
+    setStatus($("#chat-status"), "Click the trash icon again to clear the whole conversation.", "err");
+    setTimeout(() => { chatClearArmed = false; setStatus($("#chat-status"), ""); }, 3500);
+    return;
+  }
+  chatClearArmed = false;
+  try {
+    await chrome.runtime.sendMessage({ type: "API_DELETE", path: "/chat/" });
+    renderChatMessages([]);
+    setStatus($("#chat-status"), "Conversation cleared.", "ok");
+  } catch {}
+});
+
+// Auto-grow the composer textarea up to its CSS max-height
+$("#chat-input")?.addEventListener("input", e => {
+  e.target.style.height = "auto";
+  e.target.style.height = Math.min(e.target.scrollHeight, 110) + "px";
+});
+
+// Keep context fresh when the user switches tabs while the panel is open
+try {
+  chrome.tabs.onActivated.addListener(() => setTimeout(refreshChatContext, 300));
+  chrome.tabs.onUpdated.addListener((_id, info) => {
+    if (info.status === "complete") setTimeout(refreshChatContext, 500);
+  });
+} catch {}
+
+loadChat();
+refreshChatContext();

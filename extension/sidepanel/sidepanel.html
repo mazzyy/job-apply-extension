@@ -103,6 +103,32 @@
       <div class="status-line" id="letter-status"></div>
     </section>
 
+    <!-- Chat -->
+    <section class="card" id="chat-card">
+      <div class="card-header">
+        <span class="card-title">Chat</span>
+        <button class="btn-icon" id="chat-clear" title="Clear conversation">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          </svg>
+        </button>
+      </div>
+      <div class="chat-context" id="chat-context">No job context — open a job page and I'll see it.</div>
+      <div class="chat-messages" id="chat-messages"></div>
+      <div class="chat-composer">
+        <textarea class="chat-input" id="chat-input" rows="1"
+          placeholder="Ask about this job, your fit, screening answers…"></textarea>
+        <button class="btn-send" id="chat-send" title="Send (Enter)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"/>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </div>
+      <div class="status-line" id="chat-status"></div>
+    </section>
+
     <!-- Settings (collapsed) -->
     <section class="card">
       <details class="settings">

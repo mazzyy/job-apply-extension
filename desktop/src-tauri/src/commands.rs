@@ -61,7 +61,8 @@ pub async fn pull_model(
     name: String,
 ) -> Result<(), String> {
     // Ensure Ollama is running first
-    let handle = ollama::ensure_running().await?;
+    let data_dir = state.data_dir.lock().unwrap().clone();
+    let handle = ollama::ensure_running(&data_dir).await?;
     *state.ollama.lock().unwrap() = Some(handle);
 
     let client = reqwest::Client::builder()
@@ -143,4 +144,22 @@ pub async fn open_dashboard(app: tauri::AppHandle, state: State<'_, AppState>) -
     let window = app.get_webview_window("main").ok_or("main window missing")?;
     window.eval(&format!("window.location.href = '{}'", url)).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+
+#[derive(Serialize)]
+pub struct OllamaStatus {
+    pub installed: bool,
+    pub running: bool,
+    pub managed: bool,
+}
+
+#[tauri::command]
+pub async fn ollama_status(state: State<'_, AppState>) -> Result<OllamaStatus, String> {
+    let managed = state.ollama.lock().unwrap().is_some();
+    Ok(OllamaStatus {
+        installed: ollama::is_installed() || managed,
+        running: ollama::is_running().await,
+        managed,
+    })
 }

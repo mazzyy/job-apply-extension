@@ -20,6 +20,7 @@ pub struct AppState {
     pub backend: Mutex<Option<backend::BackendHandle>>,
     pub ollama: Mutex<Option<ollama::OllamaHandle>>,
     pub port: Mutex<u16>,
+    pub data_dir: Mutex<std::path::PathBuf>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -34,6 +35,7 @@ pub fn run() {
             backend: Mutex::new(None),
             ollama: Mutex::new(None),
             port: Mutex::new(8000),
+            data_dir: Mutex::new(std::path::PathBuf::new()),
         })
         .invoke_handler(tauri::generate_handler![
             commands::backend_status,
@@ -42,6 +44,7 @@ pub fn run() {
             commands::check_first_run,
             commands::set_provider,
             commands::open_dashboard,
+            commands::ollama_status,
         ])
         .setup(|app| {
             // Resolve the writable data directory (set via env so the backend picks it up)
@@ -52,6 +55,7 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir).ok();
             std::env::set_var("JAA_DATA_DIR", &data_dir);
             log::info!("JAA_DATA_DIR={}", data_dir.display());
+            *app.state::<AppState>().data_dir.lock().unwrap() = data_dir.clone();
 
             // Spawn backend on a worker thread so app boot isn't blocked
             let app_handle = app.handle().clone();
@@ -72,6 +76,39 @@ pub fn run() {
                     Err(e) => {
                         log::error!("Backend failed to start: {}", e);
                         let _ = app_handle.emit("backend-error", e.to_string());
+                    }
+                }
+            });
+
+            // Start (and on first launch, download) Ollama alongside the app.
+            // It's killed in RunEvent::ExitRequested below, so it stops with the app.
+            let ollama_handle_app = app.handle().clone();
+            let ollama_data_dir = app
+                .path()
+                .app_data_dir()
+                .expect("Could not resolve app_data_dir");
+            tauri::async_runtime::spawn(async move {
+                let app2 = ollama_handle_app.clone();
+                let mut last_pct: i8 = -1;
+                let result = ollama::ensure_running_with_install(&ollama_data_dir, move |done, total| {
+                    let pct = if total > 0 { ((done * 100) / total) as i8 } else { -1 };
+                    if pct != last_pct {
+                        last_pct = pct;
+                        let _ = app2.emit("ollama-install-progress", serde_json::json!({
+                            "downloaded": done, "total": total, "percent": pct,
+                        }));
+                    }
+                }).await;
+                match result {
+                    Ok(handle) => {
+                        let state = ollama_handle_app.state::<AppState>();
+                        *state.ollama.lock().unwrap() = Some(handle);
+                        let _ = ollama_handle_app.emit("ollama-ready", true);
+                        log::info!("Ollama ready");
+                    }
+                    Err(e) => {
+                        log::warn!("Ollama not available: {}", e);
+                        let _ = ollama_handle_app.emit("ollama-error", e.to_string());
                     }
                 }
             });

@@ -269,3 +269,11 @@ dialog::backdrop { background: rgba(15,23,42,.55); }
 .usage-kpi.cost .num { color: #dc2626; }
 .usage-kpi.tokens .num { color: #4f46e5; }
 .usage-kpi.local-savings .num { color: #16a34a; }
+
+/* --- Chat tab --- */
+.chat-msg { max-width: 75%; padding: 9px 13px; border-radius: 12px; font-size: 13.5px;
+  line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.chat-msg.user { align-self: flex-end; background: #2563eb; color: #fff; border-bottom-right-radius: 4px; }
+.chat-msg.assistant { align-self: flex-start; background: #f3f4f6; color: #111827; border-bottom-left-radius: 4px; }
+.chat-msg .chat-job { display: block; font-size: 11px; opacity: .7; margin-top: 4px; }
+.chat-typing { font-style: italic; opacity: .7; }
