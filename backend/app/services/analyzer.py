@@ -51,8 +51,9 @@ def _resolve_provider(task: str) -> tuple:
     """Returns (provider_name, model_name)."""
     row = _get_settings_row()
     mode = (row.llm_provider or "cloud").lower()
+    cloud_deployment = (row.azure_deployment or "").strip() or cfg.AZURE_OPENAI_DEPLOYMENT
     if mode == "cloud":
-        return "cloud", cfg.AZURE_OPENAI_DEPLOYMENT
+        return "cloud", cloud_deployment
     if mode == "local":
         return "local", row.local_model or "llama3.2:3b"
     # hybrid
@@ -61,18 +62,33 @@ def _resolve_provider(task: str) -> tuple:
     except Exception: overrides = {}
     pick = overrides.get(task) or HYBRID_DEFAULTS.get(task, "local")
     if pick == "cloud":
-        return "cloud", cfg.AZURE_OPENAI_DEPLOYMENT
+        return "cloud", cloud_deployment
     return "local", row.local_model or "llama3.2:3b"
+
+
+def _resolve_azure_credentials():
+    """Get Azure credentials, preferring DB-stored (UI-editable) over config.py defaults.
+    Returns (api_key, endpoint, deployment, api_version)."""
+    row = _get_settings_row()
+    api_key = (row.azure_api_key or "").strip() or cfg.AZURE_OPENAI_API_KEY
+    endpoint = (row.azure_endpoint or "").strip() or cfg.AZURE_OPENAI_ENDPOINT
+    deployment = (row.azure_deployment or "").strip() or cfg.AZURE_OPENAI_DEPLOYMENT
+    api_version = (row.azure_api_version or "").strip() or cfg.AZURE_OPENAI_API_VERSION
+    return api_key, endpoint, deployment, api_version
 
 
 def _cloud_client() -> AzureOpenAI:
     if "cloud" not in _clients:
-        if not cfg.AZURE_OPENAI_API_KEY:
-            raise RuntimeError("AZURE_OPENAI_API_KEY is empty — cannot use cloud provider.")
+        api_key, endpoint, _, api_version = _resolve_azure_credentials()
+        if not api_key:
+            raise RuntimeError(
+                "AZURE_OPENAI_API_KEY is empty — paste your key in Settings → LLM provider → Azure OpenAI key, "
+                "or set the AZURE_OPENAI_API_KEY environment variable."
+            )
         _clients["cloud"] = AzureOpenAI(
-            api_key=cfg.AZURE_OPENAI_API_KEY,
-            api_version=cfg.AZURE_OPENAI_API_VERSION,
-            azure_endpoint=cfg.AZURE_OPENAI_ENDPOINT,
+            api_key=api_key,
+            api_version=api_version,
+            azure_endpoint=endpoint,
         )
     return _clients["cloud"]
 
@@ -102,15 +118,23 @@ SYSTEM_RECRUITER = (
     "Always respond with valid JSON only — no markdown fences, no commentary."
 )
 
+# gpt-5-mini is an o-series reasoning model: it spends internal reasoning tokens
+# before producing visible output. A small max_completion_tokens budget (e.g. 4 000)
+# gets fully consumed by reasoning, leaving 0 tokens for the actual reply and
+# returning empty content with finish_reason='length'. Enforce a minimum of 16 000
+# on all cloud calls so there is always headroom for both reasoning + reply.
+_CLOUD_MIN_TOKENS = 16_000
+
 
 def _try_call(messages, *, max_tokens: int, want_json: bool, mode: str,
               provider: str, model: str):
     """One attempt against the selected provider. Returns (content, finish, usage_dict)."""
     kwargs: dict = {"model": model, "messages": messages}
+    effective = max(_CLOUD_MIN_TOKENS, max_tokens) if provider == "cloud" else max_tokens
     if mode == "completion_tokens":
-        kwargs["max_completion_tokens"] = max_tokens
+        kwargs["max_completion_tokens"] = effective
     elif mode == "max_tokens":
-        kwargs["max_tokens"] = max_tokens
+        kwargs["max_tokens"] = effective
     if want_json:
         kwargs["response_format"] = {"type": "json_object"}
 
@@ -225,32 +249,43 @@ def _parse_json_loose(text: str) -> dict:
 
 def _ping_provider(provider: str, model: str) -> dict:
     """Send a tiny 'reply PONG' request to one specific provider. Returns
-    {ok, provider, model, reply, error}."""
+    {ok, provider, model, reply, error}.
+
+    Cloud (gpt-5-mini / o-series) reasoning models consume internal chain-of-thought
+    tokens before emitting visible text. Passing max_completion_tokens=200 exhausts
+    the budget during reasoning and returns empty content. For cloud pings we omit
+    the token cap so the model can reason freely; for local we keep a small limit.
+    """
     try:
-        # Build a temporary call that bypasses HYBRID_DEFAULTS routing
-        kwargs: dict = {"model": model, "messages": [
+        messages = [
             {"role": "system", "content": "You are a health check. Reply with the single word: PONG."},
             {"role": "user", "content": "ping"},
-        ]}
-        # Use max_completion_tokens first (newer), fall back to max_tokens
-        for token_arg in ("max_completion_tokens", "max_tokens"):
-            try:
-                call_kwargs = dict(kwargs)
-                call_kwargs[token_arg] = 200
-                client = _cloud_client() if provider == "cloud" else _local_client()
-                resp = client.chat.completions.create(**call_kwargs)
-                content = (resp.choices[0].message.content or "").strip()
-                return {
-                    "ok": True, "provider": provider, "model": model,
-                    "reply": content[:80] or "(empty)",
-                }
-            except Exception as e:
-                msg = str(e).lower()
-                if "max_completion_tokens" in msg or "max_tokens" in msg:
-                    continue
-                raise
-        return {"ok": False, "provider": provider, "model": model,
-                "error": "All token-argument strategies failed"}
+        ]
+        client = _cloud_client() if provider == "cloud" else _local_client()
+
+        if provider == "cloud":
+            # No token cap — reasoning model needs headroom for chain-of-thought
+            resp = client.chat.completions.create(model=model, messages=messages)
+            content = (resp.choices[0].message.content or "").strip()
+            return {"ok": True, "provider": provider, "model": model,
+                    "reply": content[:80] or "(empty)"}
+        else:
+            # Local: try max_completion_tokens first, fall back to max_tokens
+            for token_arg in ("max_completion_tokens", "max_tokens"):
+                try:
+                    resp = client.chat.completions.create(
+                        model=model, messages=messages, **{token_arg: 200}
+                    )
+                    content = (resp.choices[0].message.content or "").strip()
+                    return {"ok": True, "provider": provider, "model": model,
+                            "reply": content[:80] or "(empty)"}
+                except Exception as e:
+                    msg = str(e).lower()
+                    if "max_completion_tokens" in msg or "max_tokens" in msg:
+                        continue
+                    raise
+            return {"ok": False, "provider": provider, "model": model,
+                    "error": "All token-argument strategies failed"}
     except Exception as e:
         return {
             "ok": False, "provider": provider, "model": model,

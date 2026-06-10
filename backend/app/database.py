@@ -35,6 +35,10 @@ def ensure_schema():
         ("profiles", "gender", "VARCHAR(40)"),
         ("profiles", "eu_work_auth", "VARCHAR(20)"),
         ("question_answers", "answer_type", "VARCHAR(40) DEFAULT 'text'"),
+        ("app_settings", "azure_api_key", "VARCHAR(500)"),
+        ("app_settings", "azure_endpoint", "VARCHAR(500)"),
+        ("app_settings", "azure_deployment", "VARCHAR(120)"),
+        ("app_settings", "azure_api_version", "VARCHAR(40)"),
     ]
     with engine.begin() as conn:
         for table, col, ddl in add_cols:

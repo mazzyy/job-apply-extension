@@ -17,4 +17,12 @@ class AppSettings(Base):
     # JSON of per-task overrides — keys: analyze_fit, structure_cv, typed_answer,
     # cover_letter, email_classify, draft_answer, verify_model
     per_task = Column(Text, default="{}")
+
+    # Azure OpenAI credentials (UI-editable, overrides config.py defaults).
+    # Stored plain in SQLite — fine for personal/single-user. Encrypt if distributing.
+    azure_api_key = Column(String(500), nullable=True)
+    azure_endpoint = Column(String(500), nullable=True)
+    azure_deployment = Column(String(120), nullable=True)
+    azure_api_version = Column(String(40), nullable=True)
+
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

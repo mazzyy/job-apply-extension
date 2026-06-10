@@ -1012,3 +1012,60 @@ async function loadLocalModels(preferred = null){
 }
 
 $("#refresh-models")?.addEventListener("click", () => loadLocalModels($("#local-model")?.value || null));
+
+/* ============================== Azure credentials ============================== */
+async function loadAzureFields(){
+  try {
+    const s = await API.get("/settings/");
+    if ($("#azure-endpoint")) $("#azure-endpoint").value = s.azure_endpoint || "";
+    if ($("#azure-deployment")) $("#azure-deployment").value = s.azure_deployment || "";
+    if ($("#azure-api-version")) $("#azure-api-version").value = s.azure_api_version || "";
+    const keyStatus = $("#azure-key-status");
+    if (keyStatus) {
+      keyStatus.textContent = s.azure_api_key_set
+        ? `· stored ${esc(s.azure_api_key_preview)}`
+        : "· not set — using config.py default if any";
+      keyStatus.style.color = s.azure_api_key_set ? "#16a34a" : "#92400e";
+    }
+    // Leave the password input EMPTY by default so it doesn't display the previous value.
+    // We send an empty string only when user explicitly clears; otherwise leave key unchanged.
+    if ($("#azure-api-key")) $("#azure-api-key").value = "";
+  } catch (e) {
+    console.warn("loadAzureFields failed", e);
+  }
+}
+
+$("#save-azure")?.addEventListener("click", async () => {
+  const body = {
+    azure_endpoint: $("#azure-endpoint")?.value.trim() || null,
+    azure_deployment: $("#azure-deployment")?.value.trim() || null,
+    azure_api_version: $("#azure-api-version")?.value.trim() || null,
+  };
+  const k = $("#azure-api-key")?.value;
+  // Only send the key field if user actually typed something — empty string means "no change"
+  if (k && k.trim()) body.azure_api_key = k.trim();
+
+  $("#azure-save-status").textContent = "Saving…";
+  try {
+    await API.put("/settings/", body);
+    $("#azure-save-status").innerHTML = '<span style="color:#16a34a">Saved — cloud client will reload on next call.</span>';
+    await loadAzureFields();
+    setTimeout(() => { $("#azure-save-status").textContent = ""; }, 3000);
+  } catch (e) {
+    $("#azure-save-status").innerHTML = `<span style="color:#b91c1c">${esc(e.message)}</span>`;
+  }
+});
+
+$("#clear-azure")?.addEventListener("click", async () => {
+  if (!confirm("Clear the saved Azure API key? The app will fall back to whatever's in config.py or AZURE_OPENAI_API_KEY env var.")) return;
+  await API.put("/settings/", { azure_api_key: null });
+  $("#azure-save-status").textContent = "Cleared.";
+  await loadAzureFields();
+});
+
+// Load Azure fields whenever Settings tab is opened — append to the existing tab-load hook
+document.querySelectorAll(".sidebar a").forEach(a => a.addEventListener("click", () => {
+  if (a.dataset.tab === "settings") loadAzureFields();
+}));
+// Also on first init
+loadAzureFields();

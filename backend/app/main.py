@@ -72,6 +72,8 @@ def health(request: Request):
         "endpoint": settings.AZURE_OPENAI_ENDPOINT,
         "api_version": settings.AZURE_OPENAI_API_VERSION,
         "api_key_set": bool(settings.AZURE_OPENAI_API_KEY),
+        "dotenv_path": settings.DOTENV_PATH or None,
+        "data_dir": str(settings.UPLOAD_DIR).rsplit("/uploads", 1)[0] if hasattr(settings, "UPLOAD_DIR") else None,
         "model_verified": status.get("ok", False),
         "model_error": status.get("error"),
         "model_reply": status.get("reply"),

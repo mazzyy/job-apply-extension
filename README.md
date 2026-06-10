@@ -1,382 +1,811 @@
 # Job Apply Assistant
 
-A **cross-platform desktop application + Chrome extension + dashboard** that helps you apply to jobs faster and smarter. Analyze JD-vs-CV fit, autofill applications, draft cover letters, manage a question library, track everything in a dashboard, and route AI work to either Azure OpenAI (`gpt-5-mini`) or a local Ollama model — your choice per task.
+A **cross-platform desktop application + Chrome extension + dashboard** that helps you apply to jobs faster and smarter. Analyzes job-vs-CV fit, autofills applications, drafts cover letters and LinkedIn DMs, manages a 283-question answer library, tracks every role in a dashboard with analytics, and routes AI work to either Azure OpenAI (`gpt-5-mini`) or a local Ollama model — your choice per task.
 
-> **Status:** v0.10.x — functional desktop app on macOS. See [`ROADMAP.md`](./ROADMAP.md) for the full plan and what's still pending.
+> **Version:** 0.10.x · macOS arm64 + Windows x64 (dev) · Single-user
+> **Status:** Functional end-to-end. See [Section 2 — Status](#2-current-status--known-issues).
 
 ---
 
-## What it does (features in one place)
+## Table of contents
 
-**On any job page (Chrome extension):**
+1. [Project overview](#1-project-overview)
+2. [Current status & known issues](#2-current-status--known-issues)
+3. [What it does (features)](#3-what-it-does-features)
+4. [Architecture](#4-architecture)
+5. [File structure](#5-file-structure)
+6. [Quick start (dev mode)](#6-quick-start-dev-mode)
+7. [Building the installer](#7-building-the-installer)
+8. [Configuration](#8-configuration)
+9. [LLM provider routing](#9-llm-provider-routing)
+10. [Backend reference](#10-backend-reference)
+11. [Chrome extension reference](#11-chrome-extension-reference)
+12. [Dashboard reference](#12-dashboard-reference)
+13. [Database schema](#13-database-schema)
+14. [Troubleshooting](#14-troubleshooting)
+15. [Recent work](#15-recent-work)
+16. [Phase status & roadmap](#16-phase-status--roadmap)
+17. [Context for resuming in a new chat](#17-context-for-resuming-in-a-new-chat)
+
+---
+
+## 1. Project overview
+
+Three components share one backend:
+
+- **Desktop app** (Tauri 2.x) — single `.dmg` / `.msi` install. Boots a bundled Python backend + opens a native window with the dashboard.
+- **Chrome extension** (Manifest V3) — lives in your browser, talks to `localhost:8000`. Handles LinkedIn / Greenhouse / Lever / Ashby / generic career sites.
+- **Dashboard** (vanilla HTML/JS) — served by the backend at `localhost:8000/dashboard/`. Same UI inside the desktop app or in any browser.
+
+Built around `gpt-5-mini` on Azure OpenAI with optional Ollama for local/free inference. Per-task routing in hybrid mode lets routine work run locally while deep reasoning runs cloud-side.
+
+---
+
+## 2. Current status & known issues
+
+### What works end-to-end today
+
+- Backend serving 50+ endpoints, SQLite persistence, additive schema migrations
+- Chrome extension on all 5 supported job-board flavours
+- LinkedIn Easy Apply guided submission (type-aware field filling, library lookup, stop-before-submit)
+- Cloud LLM (gpt-5-mini) verified
+- Local LLM (Ollama / mistral / llama3.2) verified working
+- Hybrid mode with per-task routing
+- Question library with 283 seeded questions + multi-type variants
+- LLM usage tracking with cost estimation
+- Activity timelines per application
+- Email parser for status auto-updates
+- LinkedIn DM generator
+- Cover letter generator
+- Today/yesterday/week/month rollups + 30-day activity chart
+- Tauri desktop app launches, runs bundled backend, shows dashboard
+- UI-editable Azure credentials (no `.env` editing needed)
+- Layered `.env` loader (works in dev AND installed)
+
+### Known issues being tracked
+
+| Issue | Severity | Workaround / next step |
+|---|---|---|
+| `cargo` sometimes reuses stale Rust artifacts on `npm run build` | Medium | `cargo clean` before rebuilding when paths change |
+| Webview caches dashboard HTML aggressively | Low | Press **Cmd+R** in app after backend updates |
+| Tauri icons are placeholder `J` logos | Low | Run `npx @tauri-apps/cli icon path/to/source-1024.png` before public release |
+| Installer is unsigned (Mac Gatekeeper + Windows SmartScreen warnings on first launch) | Low | Right-click → Open on Mac; More info → Run anyway on Windows. Phase 6 of roadmap: $99/yr Apple Dev cert |
+| Ollama is **not** bundled — user installs separately | Medium | Phase A of roadmap: bundle Ollama binary so installer is fully self-contained |
+| LinkedIn DOM selectors will break on UI refresh | Permanent | Maintenance debt. Watch logs in console; update selectors in `linkedin.js` / `linkedin_easyapply.js` |
+| No real test suite | Medium | Manual verification only. Add Playwright e2e before any major refactor |
+
+---
+
+## 3. What it does (features)
+
+### On any job page (Chrome extension)
 
 - Detects job posts on LinkedIn, Greenhouse, Lever, Ashby, and generic career sites.
-- Side-panel **Analyze this page** → fit score (0–100), strengths, gaps, recommendations, language requirements, JD char count.
-- Side-panel **Autofill form** → fills name/email/phone/LinkedIn/etc. plus 100+ German/English labels, including custom ones from the question library.
-- Side-panel **Draft cover letter** + **Draft LinkedIn DM** (to the person who posted the job, when LinkedIn shows them).
-- **Easy Apply (guided)** on LinkedIn — walks every step of the Easy Apply modal, fills every field using your saved answers and AI fallbacks, **stops at the Submit button** for you to verify and click.
-- On any open-ended question textarea, a small ✦ **Suggest answer** button appears that surfaces saved matching answers or drafts a new one via AI.
-- Auto-watcher detects when you click any "Apply" / "Submit" / "Bewerben" button and marks that role as `applied` in your dashboard automatically.
+- **Analyze this page** → fit score (0–100), strengths, gaps, recommendations, language requirements (e.g. "fluent German required"), JD character count.
+- **Autofill form** → fills name, email, phone, LinkedIn, GitHub, salutation, nobility title, gender, EU work auth, salary expectation, plus 100+ German/English label patterns.
+- **Cover letter** → 220–320 word tailored letter, copy-to-clipboard, regenerate.
+- **LinkedIn DM** → short message to the role's poster (auto-extracts recruiter name from LinkedIn), references CV-vs-JD specifics.
+- **Easy Apply (guided)** on LinkedIn — walks every step, fills every field using library + AI fallbacks, **stops at Submit** for user verification.
+- **✦ Suggest answer** button on every open-ended textarea in any form — finds saved answers or drafts new ones via AI.
+- **Auto-status-update** — detects clicks on Apply/Submit/Bewerben buttons and marks the role as `applied` in the dashboard.
 
-**In the dashboard:**
+### In the dashboard
 
-- **Overview** — today / yesterday / week / month application counts, total stats (analyzed / applied / interviewing / offers / avg fit), 30-day daily activity bar chart.
-- **Applications** — every role you've analyzed, filterable, click for detail dialog with full timeline.
-- **Analytics** — funnel, response rate, avg fit by outcome, response-time stats, top recurring gaps, CV performance table, source effectiveness table, language demand chart, and **AI usage & cost** card (tokens, cost, by-provider, by-task, today/week/month rollups).
-- **My answers** — 283 seeded common application questions (years per skill, work auth, language proficiency, salary, etc.) plus your custom questions. Each can have multiple answer variants (number, text, textarea, select, radio).
-- **Question library** — full Q&A history with categories, pending-review queue.
-- **Inbox** — paste a recruiter email, the AI classifies it (rejection / interview invite / offer / etc.) and updates the matching application's status.
-- **My CVs** — upload multiple CVs, auto-pick the best one per JD.
-- **Profile** — autofill data: name, contact, work auth (general + EU-specific), salutation, nobility title, gender, salary, current title, languages.
-- **Settings** — LLM provider selector (Cloud / Local / Hybrid), per-task overrides, model picker dynamically populated from your installed Ollama models, API base URL, model verification.
+- **Overview** — Today / Yesterday / Week / Month application counts; total stats (analyzed / applied / interviewing / offers / avg fit); 30-day daily-activity bar chart; fit-score distribution; source split; recent activity feed.
+- **Applications** — every role with filters, click for detail dialog showing full event timeline.
+- **Analytics** — funnel, response rate, avg fit by outcome, response-time stats, top recurring gaps, CV performance table, source effectiveness, language demand chart, **AI usage & cost** card with cloud vs local split.
+- **My answers** — 283 seeded application questions across 6 categories; per-question multiple answer variants (number/text/textarea/select/radio); search + filter; add custom questions.
+- **Question library** — full Q&A history, pending-review queue for AI-drafted answers needing verification.
+- **Inbox** — paste a recruiter email, AI classifies it (rejection/interview/offer/recruiter reachout/etc.) and auto-updates the matching application's status.
+- **My CVs** — upload multiple CVs, mark one as active, auto-pick the best per JD.
+- **Profile (autofill)** — name, contact, work auth, salutation, gender, languages, salary expectations.
+- **Settings** — LLM provider (Cloud/Local/Hybrid), per-task overrides, Azure credentials, local model picker (dynamic from Ollama), API base URL, model verification.
 
-**Behind the scenes:**
+### Behind the scenes
 
-- All LLM calls logged to a database (`llm_usage` table) with task, provider, model, prompt + completion + reasoning tokens, estimated cost, latency, success/error.
-- Library-first answer lookup: before the LLM gets a question, the curated bank is checked. Fuzzy matching on paraphrases. Translations across languages.
-- Per-task routing in hybrid mode: routine tasks (CV parsing, Easy Apply field fills, email classification) → local; deep reasoning (fit analysis, cover letters) → cloud.
-- Database schema migrations run on every startup (additive only — adds new columns idempotently).
+- Every LLM call logged with task, provider, model, tokens, cost, latency, success.
+- Library-first answer lookup — paraphrases matched fuzzily; LLM is the fallback, not the default.
+- Form-language translation: German questions captured into English library; answers translated back at fill time for free-text fields.
+- Type-aware answers: number fields get integers, selects get exact option matches, textareas get prose.
+- Pre-seeded answer bank covers every common technical YOE question and language proficiency dropdown across 20 languages.
 
 ---
 
-## Architecture at a glance
+## 4. Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                     macOS / Windows desktop app                          │
-│                          (Tauri 2.x, Rust)                               │
-│  ┌─────────────────┐  ┌──────────────────┐  ┌──────────────────────┐    │
-│  │  Splash screen  │→ │  Webview shows   │→ │  System tray icon    │    │
-│  │  + onboarding   │  │  dashboard at    │  │  Open / Quit         │    │
-│  │  wizard         │  │  localhost:8000  │  │                      │    │
-│  └─────────────────┘  └──────────────────┘  └──────────────────────┘    │
-│              │              │                                            │
-│              ▼              ▼                                            │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │              FastAPI backend (Python, PyInstaller-frozen)        │   │
-│  │      → 50+ routes, SQLite database, Azure OpenAI + Ollama        │   │
-│  └──────────────────────────────────────────────────────────────────┘   │
-│              │                                                           │
-│              ▼ (optional, only if Local/Hybrid mode)                     │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │   Ollama runtime (user installs separately for now — Phase 6)    │   │
-│  │   Default model: mistral:latest or llama3.2:3b                   │   │
-│  └──────────────────────────────────────────────────────────────────┘   │
+│                  Tauri 2.x desktop app (Rust + WebView)                  │
+│                                                                          │
+│  ┌──────────────┐ → ┌─────────────────┐ → ┌──────────────────────────┐  │
+│  │ Splash       │   │ Webview loads   │   │ System tray             │  │
+│  │ + first-run  │   │ localhost:8000/ │   │ (Open / Quit)           │  │
+│  │ wizard       │   │ dashboard/      │   │                          │  │
+│  └──────────────┘   └─────────────────┘   └──────────────────────────┘  │
+│         │                                                                │
+│         ▼  spawns + supervises                                           │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │  FastAPI backend (Python, PyInstaller-frozen one-folder bundle) │    │
+│  │  • 50+ routes (CVs, analyze, applications, questions, ...)       │    │
+│  │  • SQLite at ~/Library/Application Support/JobApplyAssistant/    │    │
+│  │  • Serves dashboard at /dashboard/                                │    │
+│  │  • LLM router: cloud (Azure) vs local (Ollama) per task          │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│         │                                                                │
+│         │ (optional, only when local/hybrid mode is on)                  │
+│         ▼                                                                │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │  Ollama runtime — user installs separately (Phase A: bundle it)  │    │
+│  │  Models: mistral:latest / llama3.2:3b / qwen2.5:7b (user picks)  │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────────┘
-              ▲                                            ▲
-              │ http://localhost:8000                      │
-              │                                            │
-┌─────────────┴──────────────┐              ┌──────────────┴─────────────┐
-│   Chrome extension MV3     │              │   Browser tab (optional)   │
-│   - LinkedIn / Greenhouse  │              │   localhost:8000/dashboard │
-│   - Side panel             │              │   Same dashboard as the    │
-│   - Easy Apply driver      │              │   Tauri webview            │
-│   - Autofill engine        │              │                            │
-│   - Question suggester     │              └────────────────────────────┘
-└────────────────────────────┘
+                                ▲
+                                │ HTTP localhost:8000
+                                │
+┌───────────────────────────────┴──────────────┐  ┌──────────────────────┐
+│           Chrome extension (MV3)              │  │  Browser tab          │
+│  • Side panel (analyze / autofill / DM)       │  │  localhost:8000/      │
+│  • 5 content scripts (linkedin / greenhouse / │  │  dashboard/           │
+│    lever / ashby / generic)                   │  │  (optional 2nd view) │
+│  • Easy Apply guided driver                   │  └──────────────────────┘
+│  • Apply-watcher (auto-status-update)          │
+│  • Question suggester (✦ button on textareas) │
+└───────────────────────────────────────────────┘
 ```
 
-Three surfaces, one backend. The desktop app **runs the backend internally** (or *should* — see [Known issues](#known-issues)). The Chrome extension talks to the same backend on `localhost:8000`. The dashboard can be opened either inside the desktop window or in a regular browser tab.
+One backend, three surfaces. The Chrome extension and the dashboard can run side-by-side; both talk to the same `localhost:8000`.
 
 ---
 
-## File structure
+## 5. File structure
 
 ```
 job apply extension/
 │
-├── README.md                   ← this file
-├── ROADMAP.md                  ← full plan, phased build, decisions log
+├── README.md                       ← this file
+├── ROADMAP.md                      ← phased build plan, decisions log
 │
-├── backend/                    ── FastAPI backend (Python 3.10+)
+├── backend/                        ─── FastAPI backend (Python 3.10+)
 │   ├── app/
-│   │   ├── main.py                  ← app entry, lifespan, model self-check on startup
-│   │   ├── config.py                ← Azure key, paths, JAA_DATA_DIR resolution
-│   │   ├── database.py              ← SQLAlchemy engine + ensure_schema() migration
-│   │   ├── models/                  ── SQLAlchemy models (8 tables)
-│   │   │   ├── cv.py, application.py, profile.py
-│   │   │   ├── question.py          ← Question + QuestionAnswer (with answer_type)
-│   │   │   ├── event.py             ← ApplicationEvent (timeline)
-│   │   │   ├── llm_usage.py         ← every LLM call logged
-│   │   │   └── settings.py          ← AppSettings (provider mode, model, base URL)
-│   │   ├── routes/                  ── 50+ endpoints
-│   │   │   ├── cvs.py               ← CV upload + multi-CV management
-│   │   │   ├── analyze.py           ← /analyze/, /analyze/cover-letter, /analyze/linkedin-message
-│   │   │   ├── applications.py     ← list + stats + events + /log dedupe
-│   │   │   ├── profile.py           ← autofill data
-│   │   │   ├── questions.py         ← library + answer-for-form + seed-bank + translation
-│   │   │   ├── emails.py            ← paste-email parser + status updates
-│   │   │   ├── analytics.py         ← overview, insights, llm-usage
-│   │   │   └── settings.py          ← LLM provider + local-models picker
-│   │   └── services/                ── business logic
-│   │       ├── analyzer.py          ← _chat() routing, cloud + local clients, verify_model
-│   │       ├── llm_pricing.py       ← per-model USD/1M-token rates
-│   │       ├── cv_parser.py         ← PDF/DOCX text extraction
-│   │       ├── cv_match.py          ← fast keyword-based CV ↔ JD scorer
-│   │       ├── language.py          ← langdetect wrapper + JD lang requirement scanner
-│   │       ├── question_matcher.py  ← paraphrase similarity (stems + char-ngrams)
-│   │       ├── typed_answer.py      ← shape-correct answer per form input type
-│   │       ├── answer_bank.py       ← 283 seed questions across 6 categories
-│   │       ├── email_parser.py      ← LLM classification of recruiter emails
-│   │       ├── events.py            ← emit() helper for timeline
-│   │       └── translator.py        ← to_english + from_english helpers
-│   ├── run.py                       ← uvicorn entry — used by both `bash run.sh` and PyInstaller
-│   ├── run.sh                       ← dev launcher (bash run.sh — port 8000)
-│   ├── build.spec                   ← PyInstaller spec
-│   ├── build.sh / build.bat         ← one-command bundle
-│   ├── dist/jobapply-backend/       ← PyInstaller output (gitignored)
-│   ├── verify_model.py              ← standalone "does my Azure key work?" check
+│   │   ├── main.py                      ← FastAPI app, lifespan, model self-check, static mount
+│   │   ├── config.py                    ← Layered .env loader, Azure creds, paths
+│   │   ├── database.py                  ← SQLAlchemy engine + ensure_schema() additive migrations
+│   │   │
+│   │   ├── models/                      ─── SQLAlchemy ORM (8 tables)
+│   │   │   ├── cv.py                        ← CV (multi-CV per user)
+│   │   │   ├── application.py               ← Application (every analyzed/applied role)
+│   │   │   ├── event.py                     ← ApplicationEvent (timeline entries)
+│   │   │   ├── profile.py                   ← Profile (autofill data — salutation, gender, EU auth, ...)
+│   │   │   ├── question.py                  ← Question + QuestionAnswer (with answer_type variants)
+│   │   │   ├── llm_usage.py                 ← every LLM call logged with cost
+│   │   │   └── settings.py                  ← AppSettings (provider, model, Azure creds, per-task)
+│   │   │
+│   │   ├── routes/                      ─── REST endpoints
+│   │   │   ├── cvs.py                       ← CV upload, list, set-active, delete, parse
+│   │   │   ├── analyze.py                   ← /analyze/, /cover-letter, /linkedin-message, /best-cv, /answer
+│   │   │   ├── applications.py              ← list, stats, events, /log (dedupe within 30min)
+│   │   │   ├── profile.py                   ← autofill GET/PUT
+│   │   │   ├── questions.py                 ← /, /custom, /seed-bank, /unanswered, /by-id, /answers, /match,
+│   │   │   │                                 /draft, /answer-for-form, /needs-review, /translate-to-english
+│   │   │   ├── emails.py                    ← /parse — LLM email classification + status update
+│   │   │   ├── analytics.py                 ← /overview, /insights, /llm-usage
+│   │   │   └── settings.py                  ← /, /local-models (Ollama proxy)
+│   │   │
+│   │   └── services/                    ─── Business logic
+│   │       ├── analyzer.py                  ← THE LLM router. _chat() dispatches to cloud/local.
+│   │       │                                  verify_model() pings both providers.
+│   │       │                                  _resolve_azure_credentials() reads DB > .env > config.
+│   │       ├── llm_pricing.py               ← Per-model USD/1M-token rates for cost estimation
+│   │       ├── cv_parser.py                 ← PDF (pypdf) + DOCX (python-docx) text extraction
+│   │       ├── cv_match.py                  ← Fast keyword-based CV ↔ JD scorer (pick best CV)
+│   │       ├── language.py                  ← langdetect + JD language requirement scanner
+│   │       ├── question_matcher.py          ← Paraphrase similarity (stems + char-ngrams)
+│   │       ├── typed_answer.py              ← Shape-correct answer per input type (num/text/select)
+│   │       ├── answer_bank.py               ← 283 seed questions across 6 categories
+│   │       ├── email_parser.py              ← Recruiter email LLM classifier
+│   │       ├── events.py                    ← emit() helper for timeline
+│   │       └── translator.py                ← to_english / from_english using the LLM router
+│   │
+│   ├── run.py                           ← uvicorn entrypoint (used by run.sh AND PyInstaller)
+│   ├── run.sh                           ← dev launcher: bash run.sh → uvicorn on port 8000
+│   ├── build.spec                       ← PyInstaller spec (hidden imports, data files)
+│   ├── build.sh / build.bat             ← one-command bundle
+│   ├── dist/jobapply-backend/           ← PyInstaller output (gitignored, ~80MB folder)
+│   ├── verify_model.py                  ← standalone "does Azure key work?" checker
 │   ├── requirements.txt
-│   ├── .env / .env.example          ← Azure OpenAI credentials (override defaults in config.py)
-│   ├── jobapply.db                  ← SQLite database (dev mode — installed app uses ~/Library/Application Support)
-│   └── uploads/                     ← CV uploads (dev mode)
+│   ├── .env / .env.example              ← Azure OpenAI credentials override
+│   ├── jobapply.db                      ← dev SQLite (installed app uses ~/Library/Application Support/)
+│   └── uploads/                         ← dev CV uploads
 │
-├── extension/                  ── Chrome extension (Manifest V3)
-│   ├── manifest.json                ← permissions, content scripts, side panel
+├── extension/                      ─── Chrome extension (MV3)
+│   ├── manifest.json                    ← permissions, content scripts per board, side panel
 │   ├── background/
-│   │   └── service_worker.js        ← API proxy + message routing
+│   │   └── service_worker.js            ← API proxy, message routing, session storage
 │   ├── content/
-│   │   ├── linkedin.js              ← LinkedIn detection + JD/recruiter extraction
-│   │   ├── linkedin_easyapply.js    ← guided Easy Apply driver
-│   │   ├── greenhouse.js, lever.js, ashby.js
-│   │   ├── generic.js               ← fallback for any career site
-│   │   ├── autofill.js              ← shared autofill engine (FIELD_MAP, label discovery)
-│   │   ├── apply_watcher.js         ← auto-status-update on Apply click
-│   │   ├── question_suggest.js      ← ✦ Suggest answer button on textareas
-│   │   └── overlay.css              ← shared on-page UI styles (FAB-era, mostly unused now)
+│   │   ├── linkedin.js                      ← LinkedIn JD/recruiter extraction + on-page card (deprecated)
+│   │   ├── linkedin_easyapply.js            ← THE Easy Apply guided driver — type-aware field filler
+│   │   ├── greenhouse.js / lever.js / ashby.js  ← board-specific JD extractors
+│   │   ├── generic.js                       ← fallback for any career site (auteega.com etc.)
+│   │   ├── autofill.js                      ← shared FIELD_MAP + label discovery (multilingual)
+│   │   ├── apply_watcher.js                 ← detects Apply/Submit clicks → auto-marks applied
+│   │   ├── question_suggest.js              ← ✦ Suggest answer button on textareas
+│   │   └── overlay.css                      ← legacy on-page UI styles
 │   ├── sidepanel/
-│   │   ├── sidepanel.html           ← UI structure
-│   │   ├── sidepanel.css            ← design tokens, theme
-│   │   └── sidepanel.js             ← all the panel logic
+│   │   ├── sidepanel.html                   ← UI structure
+│   │   ├── sidepanel.css                    ← design tokens, components
+│   │   └── sidepanel.js                     ← all the panel logic
 │   └── icons/
 │
-├── website/                    ── Dashboard (vanilla HTML/CSS/JS)
-│   ├── index.html                   ← all tabs in one document
-│   ├── app.js                       ← all dashboard logic (~1500 lines)
-│   ├── style.css                    ← design tokens + component styles
-│   └── public/                      ← unused placeholder
+├── website/                        ─── Dashboard (single-page vanilla)
+│   ├── index.html                       ← all 9 tabs in one document
+│   ├── app.js                           ← all logic (~1700 lines, well-commented sections)
+│   ├── style.css                        ← design tokens + components
+│   └── public/                          ← unused placeholder
 │
-├── desktop/                    ── Tauri 2.x desktop app
-│   ├── README.md                    ← dev mode + build instructions
-│   ├── PHASE5-BUILD.md              ← full install-build walkthrough
-│   ├── package.json                 ← @tauri-apps/cli only
-│   ├── src/                         ── frontend that loads first inside the Tauri window
-│   │   ├── index.html               ← splash screen
-│   │   ├── shell.css, shell.js      ← waits for backend, redirects to dashboard
-│   │   ├── onboarding.html          ← three-screen first-run wizard
-│   │   ├── onboarding.css, onboarding.js
-│   │   └── (later) dashboard runs in iframe / direct navigation
+├── desktop/                        ─── Tauri 2.x desktop app
+│   ├── README.md                        ← dev mode + build instructions
+│   ├── PHASE5-BUILD.md                  ← full install-build walkthrough
+│   ├── package.json                     ← @tauri-apps/cli dev dep only
+│   ├── src/                             ─── frontend loaded first in Tauri window
+│   │   ├── index.html                       ← splash screen
+│   │   ├── shell.css / shell.js             ← waits for backend, redirects to dashboard
+│   │   ├── onboarding.html                  ← three-screen first-run wizard
+│   │   ├── onboarding.css / onboarding.js
 │   ├── scripts/
-│   │   ├── bundle-resources.sh      ← copies backend/dist into src-tauri/resources/ before build
-│   │   └── bundle-resources.bat     ← same for Windows
+│   │   ├── bundle-resources.sh              ← copies backend/dist into src-tauri/resources/ before build
+│   │   └── bundle-resources.bat
 │   ├── src-tauri/
-│   │   ├── tauri.conf.json          ← bundle settings, window, tray, identifier
-│   │   ├── Cargo.toml               ← Rust deps (tauri, tokio, reqwest, futures-util, which)
-│   │   ├── build.rs                 ← tauri_build::build()
-│   │   ├── capabilities/default.json ← Tauri 2.x permission model
-│   │   ├── icons/                   ← placeholder icons (regenerate with `tauri icon`)
-│   │   ├── resources/               ← populated at build time by bundle-resources.sh
-│   │   │   └── backend/             ← copied from backend/dist/jobapply-backend/
+│   │   ├── tauri.conf.json                  ← bundle, window, tray, identifiers
+│   │   ├── Cargo.toml                       ← Rust deps (tauri, tokio, reqwest, futures-util, which)
+│   │   ├── build.rs                         ← tauri_build::build()
+│   │   ├── capabilities/default.json        ← Tauri 2.x permission model
+│   │   ├── icons/                           ← placeholders (regenerate with `tauri icon`)
+│   │   ├── resources/                       ← populated by bundle-resources at build time
+│   │   │   └── backend/                         ← PyInstaller output copied here
 │   │   └── src/
-│   │       ├── main.rs              ← Windows-subsystem entry stub
-│   │       ├── lib.rs               ← Tauri builder, lifespan, RunEvent::ExitRequested cleanup
-│   │       ├── backend.rs           ← spawn / supervise FastAPI subprocess
-│   │       ├── ollama.rs            ← spawn / supervise Ollama subprocess
-│   │       └── commands.rs          ← Tauri IPC commands: backend_status, pull_model, set_provider…
-│   └── target/                      ← Cargo build artifacts (gitignored, ~3 GB)
+│   │       ├── main.rs                      ← Windows-subsystem entry stub
+│   │       ├── lib.rs                       ← Tauri builder, lifespan, cleanup
+│   │       ├── backend.rs                   ← FastAPI subprocess manager (4-candidate path search)
+│   │       ├── ollama.rs                    ← Ollama subprocess manager
+│   │       └── commands.rs                  ← IPC commands: backend_status, pull_model, set_provider...
+│   └── target/                          ← Cargo artifacts (gitignored, ~3GB)
 │
 └── .gitignore
 ```
 
 ---
 
-## Getting started
+## 6. Quick start (dev mode)
+
+Fastest way to get running, no installer needed.
 
 ### Prerequisites
 
-- **Python 3.10+**
-- **Node.js 20+** (for the desktop app build only)
-- **Rust stable** (for the desktop app build only — install via [rustup.rs](https://rustup.rs/))
-- **macOS**: Xcode Command Line Tools (`xcode-select --install`)
-- **Windows**: Microsoft C++ Build Tools, WebView2
-- *(Optional)* **Ollama** for local LLM mode — `brew install ollama` or [download](https://ollama.com/download)
+- Python 3.10+
+- Node.js 20+ (for desktop app dev only)
+- Rust stable (for desktop app dev only — install from <https://rustup.rs>)
+- macOS: `xcode-select --install`
+- Windows: Microsoft C++ Build Tools + WebView2
+- Optional: Ollama for local LLM (`brew install ollama` or <https://ollama.com/download>)
 
-### Quick dev mode (no installer)
+### Run in three terminals
 
-This is the fastest way to get everything running for development:
-
-```bash
+```
 # Terminal 1 — backend
 cd backend
-bash run.sh                          # uvicorn on http://localhost:8000
+pip install -r requirements.txt   # first time only
+bash run.sh                        # uvicorn on http://localhost:8000
 
-# Terminal 2 — dashboard (browser)
+# Terminal 2 — dashboard in browser
 cd website
 python3 -m http.server 5500
-open http://localhost:5500           # macOS; on Windows use start http://localhost:5500
+open http://localhost:5500         # or browse to localhost:8000/dashboard/ via backend
+
+# Terminal 3 — Tauri desktop app (optional)
+cd desktop
+npm install                        # first time only
+npm run dev                         # native window + reuses backend on 8000
 ```
 
 Then load the Chrome extension:
 
-1. `chrome://extensions` → Developer mode ON → **Load unpacked** → select `extension/`
-2. Pin the toolbar icon
+1. `chrome://extensions` → Developer mode ON
+2. **Load unpacked** → select `extension/` folder
+3. Pin the toolbar icon
 
-Optionally start the Tauri desktop app (it'll detect the running backend and reuse it):
+---
 
-```bash
-# Terminal 3 — Tauri dev
-cd desktop
-npm install
-npm run dev
+## 7. Building the installer
+
+Produces a `.dmg` on macOS / `.msi` on Windows. ~10–40 min first build, faster on subsequent runs.
+
 ```
-
-### Production build (installer)
-
-See [`desktop/PHASE5-BUILD.md`](./desktop/PHASE5-BUILD.md) for the full walkthrough. The short version:
-
-```bash
-# Step 1 — freeze the Python backend
+# Step 1 — freeze the Python backend (≈3 min first time)
 cd backend
-bash build.sh                        # ~3 min first time; produces dist/jobapply-backend/
+bash build.sh                              # creates dist/jobapply-backend/ (~80 MB folder)
 
-# Step 2 — build the desktop installer
+# Step 2 — build the desktop installer (≈8 min first time, 2-5 min subsequent)
 cd ../desktop
-npm run build                        # 10–40 min first time; subsequent runs much faster
+npm run build                              # produces .dmg / .msi in target/release/bundle/
 ```
 
-Output:
+Output locations:
 
 - macOS: `desktop/src-tauri/target/release/bundle/dmg/Job Apply Assistant_0.10.0_aarch64.dmg`
-- Windows: `...\bundle\msi\Job Apply Assistant_0.10.0_x64_en-US.msi`
+- Windows: `desktop\src-tauri\target\release\bundle\msi\Job Apply Assistant_0.10.0_x64_en-US.msi`
 
-First launch shows a security warning because we don't have a code-signing cert ($99/year, deferred to Phase 6). Right-click → Open on Mac, More info → Run anyway on Windows. After the first launch, it opens normally.
+### First-launch security warnings (unsigned build)
 
-### Configuring credentials
+Both OSes will warn on first launch because we don't have signing certs. One-time per OS:
 
-Azure OpenAI credentials are baked into [`backend/app/config.py`](./backend/app/config.py) as defaults. You can override them with a `.env` file in `backend/`:
+- **macOS**: Right-click the `.app` in Applications → **Open** → click Open in the dialog
+- **Windows**: SmartScreen says "Windows protected your PC" → click **More info** → **Run anyway**
+
+After first launch, both open normally.
+
+### Optional: bundle Ollama binary into the installer
+
+By default users install Ollama separately. To bundle:
 
 ```
-AZURE_OPENAI_ENDPOINT=https://veilixdocumentextraction.openai.azure.com/
-AZURE_OPENAI_API_KEY=<your-key>
+BUNDLE_OLLAMA=1 npm run build
+```
+
+Adds ~30 MB to the installer; user no longer needs `brew install ollama`. The model itself still downloads on first run via the wizard.
+
+### When Tauri uses stale Rust artifacts
+
+If you change `src-tauri/src/*.rs` files and `npm run build` doesn't seem to pick them up:
+
+```
+cd desktop/src-tauri
+cargo clean                                # nuke compiled artifacts
+cd ..
+npm run build                              # forces clean rebuild
+```
+
+---
+
+## 8. Configuration
+
+### Azure OpenAI credentials — three ways to set them (priority order)
+
+**1. UI (recommended)** — Open the app → Settings → **Azure OpenAI credentials** card → paste API key, deployment name, endpoint URL, API version → Save. Stored in the database, masked in the UI (only last 4 chars shown), survives rebuilds.
+
+**2. `.env` file** — Four locations searched in priority order, first match wins:
+
+```
+backend/.env                                          # dev mode
+~/Library/Application Support/JobApplyAssistant/.env  # installed app (Mac)
+%APPDATA%\JobApplyAssistant\.env                      # installed app (Windows)
+~/.jobapply.env                                        # cross-platform fallback
+```
+
+Format:
+
+```
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_API_KEY=sk-...
 AZURE_OPENAI_DEPLOYMENT=gpt-5-mini
 AZURE_OPENAI_API_VERSION=2024-02-15-preview
 ```
 
-⚠️ The default key in `config.py` was pasted in chat and is logged in conversation history — **rotate it via Azure portal before sharing with anyone else.**
+**3. Environment variables** — Standard OS env vars work too. `AZURE_OPENAI_API_KEY=... uvicorn ...`.
 
-For local LLM: install Ollama, `ollama pull mistral:latest` (or `llama3.2:3b`), then in the app's Settings → LLM provider → pick **Local** or **Hybrid** → set the local model to whatever `ollama list` shows → Save → Test connection.
+### Local LLM (Ollama)
 
----
+```
+brew install ollama          # macOS
+winget install Ollama.Ollama # Windows
+ollama pull llama3.2:3b      # 2 GB, recommended
+ollama pull mistral:latest   # 4.4 GB, better quality
+ollama serve                  # auto-starts on Mac, manual on others
+```
 
-## LLM provider model
+Then in the app: Settings → LLM provider → **Local** or **Hybrid** → pick model from the dropdown (auto-populates from your Ollama install) → Save → Test connection.
 
-There are three modes (set in Settings → LLM provider):
+### Database location
 
-| Mode | What runs where | Cost per day (moderate use) | Privacy |
-|------|----------------|----------------------------|---------|
-| **Cloud** | Everything → `gpt-5-mini` on Azure OpenAI | ~$0.50–$1.50 | Requests sent to Azure |
-| **Local** | Everything → Ollama on your machine | $0 | Nothing leaves your machine |
-| **Hybrid** | Routine tasks → Local; deep reasoning → Cloud | ~$0.10–$0.30 | Most data stays local |
-
-Hybrid's per-task defaults (in `analyzer.py`'s `HYBRID_DEFAULTS`):
-
-- **Cloud:** `analyze_fit`, `cover_letter`, `draft_answer` (quality matters most)
-- **Local:** `structure_cv`, `typed_answer`, `email_classify` (constrained tasks where small models are fine)
-- **Cloud:** `verify_model` (one-time health check)
-
-You can override per-task in Settings (collapsed panel under "Per-task overrides"). Cost tracking lives in `llm_usage` table; see Analytics → AI usage & cost.
-
----
-
-## Database
-
-SQLite, single file. Lives in different places depending on how you run the app:
-
-| How you launch | Database path |
-|----------------|---------------|
+| Context | SQLite path |
+|---|---|
 | `bash run.sh` (dev) | `backend/jobapply.db` |
-| Tauri desktop dev (`npm run dev`) | `~/Library/Application Support/com.jobapplyassistant.desktop/jobapply.db` |
-| Installed `.app` from Applications | `~/Library/Application Support/com.jobapplyassistant.desktop/jobapply.db` |
+| Tauri dev (`npm run dev`) | `~/Library/Application Support/com.jobapplyassistant.desktop/jobapply.db` |
+| Installed `.app` | Same as above |
 
-Schema is created automatically on startup via `Base.metadata.create_all()`. Additive migrations run via `ensure_schema()` in `database.py` — adds new columns to existing DBs without breaking them. **Non-additive changes (rename, drop, type change) are not handled.**
+The schema is created automatically on first launch. Additive migrations run via `ensure_schema()` in `database.py` — adds new columns without breaking existing data. Non-additive changes (rename, drop, type change) are not handled.
 
-Tables:
+### Profile data (used for autofill)
 
-- `cvs` — your uploaded CVs (raw text + structured JSON)
-- `applications` — every job you've analyzed or applied to
-- `application_events` — timeline (analyzed / autofilled / applied / interview_scheduled / etc.)
-- `profiles` — single-row, used for autofill
-- `questions` + `question_answers` — library (with answer_type variants)
-- `app_settings` — single-row, holds LLM provider + model + base URL
-- `llm_usage` — every LLM call logged
+Open the app → Profile (autofill) tab. Fill in:
 
----
-
-## Known issues
-
-| Issue | Status | Where to look |
-|-------|--------|---------------|
-| Bundled backend not found by Rust in installed .app | **Active** — needs `cargo clean` rebuild | `desktop/src-tauri/src/backend.rs` |
-| Icons are placeholders | Open — regenerate with `npx @tauri-apps/cli icon` | `desktop/src-tauri/icons/` |
-| Code signing not configured | Phase 6 (optional, $99/yr) | `desktop/src-tauri/tauri.conf.json` |
-| Auto-update not wired | Phase 8 (deferred) | — |
-| Ollama not bundled in installer | Phase A (next) — user installs separately | `desktop/scripts/bundle-resources.sh` (has BUNDLE_OLLAMA flag) |
-| Single-user assumption (one Profile row, no auth) | Not blocking | — |
-| LinkedIn DOM selectors will break on UI refresh | Maintenance debt | `extension/content/linkedin.js`, `linkedin_easyapply.js` |
-| No real tests | Not blocking but should add before refactor | — |
+- Name (full / first / last), email, phone
+- Address (city, country)
+- LinkedIn, GitHub, portfolio URLs
+- Current company + title
+- Years of experience
+- Salutation (Mr/Ms/Dr/Prof)
+- Title of nobility (Dr., Prof. Dr., ...)
+- Gender
+- EU work authorization (Yes/No)
+- Work authorization (free text)
+- Salary expectation, notice period
+- Languages (used for proficiency dropdowns)
 
 ---
 
-## Recent work (most recent first)
+## 9. LLM provider routing
 
-- **Dynamic local-model dropdown** — Settings UI now populates the Local model dropdown from `GET /v1/models` against the live Ollama. Refresh button. Shows model sizes. Gracefully handles "Ollama not running" and "no models pulled."
-- **Test Connection tests both providers** — Settings → Test connection now pings both cloud AND local regardless of mode. Per-provider green/red results.
-- **Proxy-bypass on local calls** — `httpx.Client(trust_env=False)` so VPN apps that set system proxies via launchd don't break localhost calls.
-- **Auto-append /v1** — if user types `http://localhost:11434` for Ollama base URL, code appends `/v1` automatically.
-- **LinkedIn DM generator** — `/analyze/linkedin-message` endpoint + side-panel button + LinkedIn recruiter-name extraction.
-- **English-only library + translation layer** — captured non-English questions get translated to English before storage. At fill time, the form's question is translated to English for matching, and the answer is translated back if the form is non-English (free-text fields only). Batch "Translate to English" button in dashboard.
-- **Multi-type answer variants** — each question can store separate answers for number, text, textarea, select, radio. Autofill picks the matching variant.
-- **283-question curated answer bank** — preseeded library covering years per skill (100+ tech terms), language proficiency (20 languages incl. German variants), work auth (EU/US/UK), salary, motivation, behavioral, EEO, education.
-- **Profile fields expansion** — salutation, nobility_title, gender, eu_work_auth added to Profile model + dashboard form + autofill FIELD_MAP (German + English labels).
-- **LLM usage tracking** — `llm_usage` table logs every call. Dashboard Analytics → AI usage & cost card shows totals, today/week/month, by-provider, by-task, with USD cost estimation.
-- **Today/yesterday/week/month rollups** on Overview tab with daily activity bar chart.
-- **Provider router** (analyzer.py `_chat()`) — cloud/local/hybrid mode with per-task overrides.
-- **Tauri 2.x desktop app** — Rust + native webview + bundled Python backend + first-run wizard.
+Three modes, set in Settings → LLM provider:
+
+| Mode | Cost/day (moderate use) | Privacy | Speed |
+|---|---|---|---|
+| **Cloud** | $0.50–$1.50 | Requests sent to Azure | Fastest (2–5s/call) |
+| **Local** | $0 | Nothing leaves machine | Slower (10–30s/call) |
+| **Hybrid** | $0.10–$0.30 | Mixed | Mixed (best for routine + cloud for hard reasoning) |
+
+### Hybrid mode per-task defaults
+
+Set in `analyzer.py` (`HYBRID_DEFAULTS`):
+
+| Task | Default in hybrid |
+|---|---|
+| `analyze_fit` | Cloud (heaviest reasoning) |
+| `cover_letter` | Cloud (writing quality matters) |
+| `draft_answer` | Cloud (nuanced first-person prose) |
+| `structure_cv` | Local (constrained structured extraction) |
+| `typed_answer` | Local (short Easy Apply field fills) |
+| `email_classify` | Local (simple classification) |
+| `verify_model` | Cloud (one-time health check) |
+
+Override per-task in Settings → LLM provider → "Per-task overrides" accordion.
+
+### How verification works
+
+Settings → **Test connection** always pings both providers (cloud + local) regardless of mode. Shows separate green/red results so you can verify Ollama setup before flipping to local mode. The top-level "model verified" indicator in the sidebar reflects the active mode's primary provider.
 
 ---
 
-## Resuming work in a new chat (context dump for AI)
+## 10. Backend reference
 
-If you're a future AI assistant reading this:
+### Routes (50+)
 
-**What's already built:** A complete desktop application (Tauri 2.x for macOS/Windows), Chrome extension (Manifest V3 for LinkedIn/Greenhouse/Lever/Ashby/generic career sites), FastAPI backend with 50+ endpoints, SQLite database, and a vanilla-JS dashboard. Provider routing supports Azure OpenAI (`gpt-5-mini`) and Ollama (local). The codebase is around 3000 lines of Python + 2000 lines of JavaScript + 500 lines of Rust + 200 lines of CSS/HTML.
+**CVs** (`/cvs/`)
 
-**What's most recently in flux:** Phase 5 (installer) is mostly done but has one outstanding bug — the Rust code in `desktop/src-tauri/src/backend.rs` resolves the bundled backend path through `resource_dir()` which on macOS doesn't include the `resources/` subfolder, so the binary at `Contents/Resources/resources/backend/jobapply-backend` isn't found by candidate path #1 (`resource_dir.join("backend")`). I added a 4-path search but the user hasn't done a `cargo clean` rebuild yet to pick up the change. The workaround is the user runs `bash run.sh` in a terminal and the Rust code's "reuse-existing on port 8000" fallback picks it up.
+- `GET /cvs/` — list all CVs
+- `POST /cvs/` — upload PDF/DOCX/TXT (multipart with file + label + tag + set_active)
+- `GET /cvs/active` — get currently-active CV
+- `POST /cvs/{id}/activate` — set as active
+- `DELETE /cvs/{id}` — delete
 
-**Where to start when resuming:**
+**Analyze** (`/analyze/`)
 
-1. Read `ROADMAP.md` for the full plan and what phases remain.
-2. Read this README's "Known issues" section.
-3. Last touched files: `desktop/src-tauri/src/backend.rs`, `backend/app/services/analyzer.py`, `backend/app/routes/settings.py`, `website/app.js`.
-4. To run locally: `cd backend && bash run.sh`, then `cd ../desktop && npm run dev`. Backend on `localhost:8000`.
-5. Ollama default port is 11434, OpenAI-compatible endpoint at `/v1`.
-6. Database lives in `~/Library/Application Support/com.jobapplyassistant.desktop/` when running through Tauri.
+- `POST /analyze/` — fit analysis (JD + CV → score, gaps, strengths, recs, language flags). Auto-selects best CV if `auto_select_cv: true`. Saves an Application row by default.
+- `POST /analyze/best-cv` — score each CV vs JD, return ranked list
+- `POST /analyze/cover-letter` — 220–320 word tailored letter
+- `POST /analyze/linkedin-message` — 110–180 word DM to the role poster
+- `POST /analyze/answer` — generic open-ended answer drafter (legacy; prefer `/questions/answer-for-form`)
 
-**Coding conventions used:**
+**Applications** (`/applications/`)
 
-- Backend: FastAPI + SQLAlchemy 2.0, sync sessions, Pydantic v2.
-- LLM calls go through `_chat()` in `analyzer.py` — never call OpenAI/Ollama directly elsewhere.
-- Every LLM call passes a `task` keyword arg that drives provider routing and usage logging.
-- Dashboard uses `window.location.origin` for API base URL (no hardcoded ports).
-- Tauri 2.x is in use, NOT 1.x — the `Emitter` trait must be imported separately from `Manager`.
-- Python is bundled via PyInstaller (one-folder mode). Hidden imports declared in `backend/build.spec`.
+- `GET /applications/` — list (with filter/limit)
+- `GET /applications/stats` — totals + funnel + buckets
+- `GET /applications/{id}` — detail
+- `PATCH /applications/{id}` — update status (analyzed → applied → interview → offer → rejected)
+- `DELETE /applications/{id}` — delete
+- `POST /applications/log` — log a role applied via autofill (idempotent — same URL within 30min dedupes)
+- `GET /applications/{id}/events` — timeline
+- `POST /applications/{id}/events` — add note
 
-**Things to NOT do without asking:**
+**Profile** (`/profile/`)
 
-- Don't rewrite the backend in another framework / language (PyInstaller bundle is mature).
-- Don't switch from Tauri to Electron (we made that decision for size/perf reasons — see ROADMAP section 8).
-- Don't add server-side auth or hosting (single-user, localhost-only is the deliberate design).
-- Don't change the database to Postgres without explicit migration planning (SQLite is correct for desktop apps).
+- `GET /profile/` — autofill data
+- `PUT /profile/` — update
+
+**Questions** (`/questions/`)
+
+- `GET /questions/` — full library (with answers and variants)
+- `POST /questions/` — create from text (auto-classifies category)
+- `POST /questions/custom` — create with input_type + options
+- `POST /questions/seed-bank` — idempotently load 283 seeded common questions
+- `GET /questions/unanswered` — bank questions with no user answer yet
+- `GET /questions/needs-review` — auto-drafted answers awaiting verification
+- `POST /questions/match` — paraphrase match a question to the library
+- `POST /questions/draft` — LLM draft a new answer
+- `POST /questions/answer-for-form` — **the main one**: returns shape-correct answer for one form field (library-first lookup, then LLM fallback, with input_type / max_length / options metadata for type-aware answers)
+- `POST /questions/translate-to-english` — batch translate existing non-English questions to English (merges duplicates)
+- `GET/PATCH/DELETE /questions/by-id/{qid}` — manage one question
+- `POST /questions/by-id/{qid}/answers` — add an answer variant (with answer_type)
+- `POST /questions/by-id/{qid}/mark-reviewed` — clear the needs-review flag
+- `PATCH/DELETE /questions/answers/{aid}` — update / delete one variant
+- `POST /questions/answers/{aid}/use` — bump usage counter
+
+**Emails** (`/emails/`)
+
+- `POST /emails/parse` — pasted recruiter email → classified kind, summary, suggested status, auto-applies to matching application
+
+**Analytics** (`/analytics/`)
+
+- `GET /analytics/overview` — total + funnel + today/yesterday/week/month rollups + by-source + fit-buckets + CV performance + source effectiveness + language demand + 30-day daily activity + top recurring gaps
+- `GET /analytics/insights` — short narrative notes derived from overview
+- `GET /analytics/llm-usage` — total cost, tokens, calls, latency + today/week/month rollups + by-provider + by-task + by-model + 30-day daily series
+
+**Settings** (`/settings/`)
+
+- `GET /settings/` — LLM provider, local model, base URL, per-task overrides, Azure creds (masked)
+- `PUT /settings/` — update any subset (azure_api_key empty string = no change, null = clear)
+- `GET /settings/local-models` — proxies Ollama's `/v1/models` (tries localhost + 127.0.0.1, bypasses system proxies)
+
+**Health + verification**
+
+- `GET /health` — backend status, model, endpoint, dotenv path, data dir, model_verified flag
+- `POST /verify-model` — force re-verify (pings both cloud + local providers)
+- `GET /dashboard/` — serves the website (static mount)
+
+### Services (in `backend/app/services/`)
+
+- **`analyzer.py`** — central LLM router. Every LLM call goes through `_chat(messages, task=...)`. Routes to cloud or local based on `_resolve_provider(task)`. Captures token usage from response. Writes one row to `llm_usage` per call (with cost estimation from `llm_pricing.py`). Has multiple retry strategies for empty / malformed responses.
+- **`typed_answer.py`** — for form fields. Builds a strict prompt that returns shape-correct JSON `{value, explanation, confidence, needs_review}`. Coerces number/select/textarea outputs into the requested type. Handles language-proficiency questions specially using `Profile.languages`. Has `lookup_default_answer()` that checks the library before calling the LLM.
+- **`cv_parser.py`** — PDF (pypdf) + DOCX (python-docx) → plain text.
+- **`cv_match.py`** — fast keyword scorer for picking the best CV per JD without an LLM call.
+- **`question_matcher.py`** — paraphrase similarity using token overlap + char-trigrams + a stem/synonym dictionary.
+- **`answer_bank.py`** — 283 seed questions in a Python list, organized by category. Idempotent insertion.
+- **`translator.py`** — `to_english(text)` + `from_english(text, lang_code)` using the LLM router.
+- **`email_parser.py`** — LLM classifier + heuristic application-matching by sender domain / company name.
+- **`events.py`** — `emit(db, app_id, kind, title, ...)` helper used everywhere status changes.
+- **`llm_pricing.py`** — per-model USD/1M-token rates. Update when prices change.
+- **`language.py`** — langdetect wrapper + scanner for non-English language requirements in JDs.
+
+---
+
+## 11. Chrome extension reference
+
+Manifest V3. Content scripts inject per-domain. Side panel and background service worker coordinate.
+
+### Content scripts (in `extension/content/`)
+
+- **`linkedin.js`** — runs on LinkedIn job pages. Extracts title/company/location/JD/recruiter via 7-selector fallback (LinkedIn's DOM is volatile). Watches SPA URL changes.
+- **`linkedin_easyapply.js`** — the Easy Apply driver. Walks each step of the modal, fills every visible field using the library + AI fallback, **stops at the Submit button**. Type-aware field detection (number/text/select/radio/textarea via 5 strategies). Highlights required-blank fields in yellow.
+- **`greenhouse.js` / `lever.js` / `ashby.js`** — board-specific JD extractors.
+- **`generic.js`** — fallback for any career site that isn't on the supported list. Heuristic detection ("looks like a job page" / "has form fields").
+- **`autofill.js`** — shared engine. `FIELD_MAP` has 30+ entries covering English + German labels for every Profile field. 6-strategy label discovery (aria-label, aria-labelledby, `<label for>`, closest ancestor, wrapper text, fallback to placeholder/name).
+- **`apply_watcher.js`** — listens for clicks on Apply/Submit/Bewerben/Postuler/Aplicar buttons across all sites. Auto-marks the last-analyzed application as `applied`.
+- **`question_suggest.js`** — adds a ✦ Suggest answer button next to every textarea on every form. Opens a popover with saved matches + AI draft.
+
+### Background (`extension/background/service_worker.js`)
+
+- Proxies all API calls (avoids CORS in content scripts).
+- Stores `lastApplicationId` + `lastApplicationUrl` in `chrome.storage.session` so `apply_watcher.js` knows which row to update on submit.
+- Settings: API base URL + per-user preferences.
+
+### Side panel (`extension/sidepanel/`)
+
+- HTML: splash screen → analyze + autofill + cover-letter + Easy Apply + LinkedIn DM buttons + Settings card.
+- JS: tracks `lastAnalysis`, `lastJobPayload`, `lastApplicationId` so cover letter / DM buttons reuse the most recent context.
+- Settings: API base URL, auto-pick best CV toggle, Test Connection (pings both providers), local model picker.
+
+---
+
+## 12. Dashboard reference
+
+Nine tabs in `website/index.html`. All JS in `website/app.js` (~1700 lines, sectioned by `/* ====== Tab name ====== */` comments).
+
+| Tab | Loaded function | Backend endpoints |
+|---|---|---|
+| Overview | `loadStats`, `loadApps`, `loadTimeframes` | `/applications/stats`, `/applications/`, `/analytics/overview` |
+| Applications | `loadApps`, `openApp` | `/applications/`, `/applications/{id}`, `/applications/{id}/events` |
+| Analytics | `loadAnalytics`, `loadLLMUsage` | `/analytics/overview`, `/analytics/insights`, `/analytics/llm-usage` |
+| My answers | `loadAnswerBank` | `/questions/`, `/questions/seed-bank`, `/questions/custom`, `/questions/translate-to-english` |
+| Question library | `loadQuestions`, `loadNeedsReview` | `/questions/`, `/questions/needs-review` |
+| Inbox | submit handler on `#email-text` | `/emails/parse` |
+| My CVs | `loadCvs` | `/cvs/` |
+| Profile (autofill) | `loadProfile` | `/profile/` |
+| Settings | `loadProviderSettings`, `loadLocalModels`, `loadAzureFields`, `checkApi` | `/settings/`, `/settings/local-models`, `/verify-model`, `/health` |
+
+API base URL is derived from `window.location.origin` (with `localStorage.apiBase` override), so the dashboard works on any port that backend chooses.
+
+---
+
+## 13. Database schema
+
+SQLite single file. Schema auto-created via `Base.metadata.create_all()`. Additive migrations via `ensure_schema()` in `database.py`.
+
+### Tables
+
+| Table | Rows | Purpose |
+|---|---|---|
+| `cvs` | many | Uploaded CVs (raw text + structured JSON + active flag) |
+| `applications` | many | Every analyzed/applied job |
+| `application_events` | many | Per-application timeline (analyzed, autofilled, applied, status_change, email_received, rejected, offered, note, ready_to_submit) |
+| `profiles` | 1 | Single Profile row — autofill data |
+| `questions` | many | Question library entries (text, normalized, category, input_type metadata, needs_review flag) |
+| `question_answers` | many | Per-question answer variants tagged by answer_type (number / text / textarea / select / radio); is_default flag |
+| `app_settings` | 1 | Single AppSettings row — provider mode, local model, base URL, per-task JSON, Azure credentials |
+| `llm_usage` | many | One row per LLM call: task, provider, model, tokens, cost, latency, success/error |
+
+### Single-user assumption
+
+The app deliberately stores ONE Profile row and ONE AppSettings row. Switching to multi-user would require an explicit users table + auth model — not blocked but not built.
+
+---
+
+## 14. Troubleshooting
+
+### "AZURE_OPENAI_API_KEY is empty"
+
+- Paste your key in Settings → **Azure OpenAI credentials** → Save.
+- Or curl directly: `curl -X PUT http://localhost:8000/settings/ -H "Content-Type: application/json" -d '{"azure_api_key":"YOUR_REAL_KEY"}'`
+- Or drop a `.env` at `~/Library/Application Support/JobApplyAssistant/.env` (Mac) or `%APPDATA%\JobApplyAssistant\.env` (Windows) and restart the app.
+- Verify with `curl http://localhost:8000/health` — `api_key_set: true` should appear.
+
+### Cloud says PONG but local says "Connection error"
+
+Run `ollama list` to confirm models are pulled. The model name in Settings must **exactly** match what Ollama reports (e.g. `mistral:latest`, not `mistral:7b`). Use the dropdown in Settings to pick from your installed models — don't type the name manually.
+
+### Local URL says "Ollama not reachable"
+
+- Confirm Ollama is running: `curl http://localhost:11434/v1/models` should return JSON.
+- Confirm base URL ends with `/v1`: `http://localhost:11434/v1` (the code auto-appends if you typed just `http://localhost:11434`).
+- macOS VPN/proxy apps that set system proxies via launchd may intercept localhost calls. The backend now passes `trust_env=False` to httpx — should be fixed.
+
+### Dashboard doesn't show the latest UI changes
+
+The Tauri webview caches HTML. Inside the app window: **Cmd+R** to force-reload. If that's not enough, quit (Cmd+Q) and relaunch.
+
+### "Bundled backend not found in any of N candidate paths"
+
+The Rust code can't locate the PyInstaller bundle inside the .app. Run with diagnostic logging:
+
+```
+"/Applications/Job Apply Assistant.app/Contents/MacOS/job-apply-assistant"
+```
+
+Look for `[JAA]` lines listing which paths were checked. The actual binary should be at `Contents/Resources/resources/backend/jobapply-backend`.
+
+Fix is in code as of 0.10.0 (4-path search + tree walk on failure). If you have an older build:
+
+```
+cd desktop/src-tauri && cargo clean && cd .. && npm run build
+```
+
+### `npm run build` is stuck at "Sanity-checking the bundled binary"
+
+Old version of the script had a non-terminating health check. Fixed in current `bundle-resources.sh` — uses `kill -9` and a 5s timeout. If you still hit it, set `JAA_SKIP_SANITY=1 npm run build`.
+
+### `cargo metadata` fails with `command not found`
+
+Rust isn't installed or not in PATH. Install via <https://rustup.rs>, then **restart your terminal** so PATH updates.
+
+### Bundled backend starts but dashboard says API unreachable
+
+Backend started on a port other than 8000 (find_free_port walked up). Chrome extension defaults to 8000. Either:
+- Kill the conflicting process on 8000 and relaunch the app
+- Or in the extension's side-panel Settings, set API base URL to whatever port the app is actually using
+
+---
+
+## 15. Recent work (chronological, newest first)
+
+### 0.10.x — recent
+
+- **Layered `.env` loader** — config.py now searches 4 locations (CWD, backend/, ~/Library/Application Support/JobApplyAssistant/, ~/.jobapply.env). Installed apps can drop their `.env` in the per-user data dir.
+- **`/health` endpoint reports dotenv path + data dir** — easy debugging of "where is my config coming from?"
+- **UI-managed Azure API key** — new Azure OpenAI credentials card in Settings. Stored masked in DB. Cache-invalidates on save. Removes the need to edit `config.py` or `.env`.
+- **Dynamic Ollama model dropdown** — Settings → Local model field populates from `GET /v1/models`. Shows model sizes. Refresh button. Graceful "Ollama not reachable" + install hint when needed.
+- **Test Connection pings both providers** regardless of mode. Per-provider green/red. Diagnostic block (URLs tried, proxy env vars) on failures.
+- **Proxy-bypass for localhost** — both `_local_client()` and `/local-models` use `httpx.Client(trust_env=False)` so VPN apps that set system proxies don't break localhost calls.
+- **Auto-append `/v1`** to Ollama base URLs if missing.
+- **4-candidate path search** for bundled backend resolution in installed `.app`.
+- **LinkedIn DM generator** — `/analyze/linkedin-message` + side-panel button + LinkedIn recruiter-name auto-extraction.
+- **English-only question library** — captured non-English questions translated to English on storage; answers translated back to form's language at fill time (free-text only). Dashboard "Translate to English" batch button.
+- **Multi-type answer variants** — each question can have separate number / text / textarea / select / radio answers. Autofill picks the matching variant.
+- **283-question curated bank** — preseeded covering YOE for 100+ skills, language proficiency in 20 languages (+ German variants), work auth (EU/US/UK/DE), salary, motivation, behavioral, EEO, education.
+- **Expanded Profile fields** — salutation, nobility_title, gender, eu_work_auth + new German/English labels in autofill FIELD_MAP.
+- **LLM usage tracking** — `llm_usage` table logs every call with cost. Dashboard Analytics → AI usage & cost card.
+- **Today / Yesterday / Week / Month rollups** + 30-day activity bar chart on Overview.
+
+### 0.9.x — installer + LLM router
+
+- **Tauri 2.x desktop app** — Rust + native webview + bundled Python backend + first-run wizard
+- **LLM provider router** — cloud / local / hybrid with per-task overrides
+- **PyInstaller backend bundle**
+- **Phase 5 build pipeline** — `bash build.sh` → `npm run build` → `.dmg` / `.msi`
+
+### 0.5–0.8 — Easy Apply + extensions
+
+- LinkedIn Easy Apply guided submission
+- Question library backend + UI
+- Application timeline / activity events
+- Email parser → status updates
+- Analytics dashboard
+- Auto-pick best CV per JD
+- Cover letter generator
+- Auto-mark as applied on submit click
+
+### 0.1–0.4 — foundation
+
+- FastAPI backend skeleton
+- Chrome MV3 extension with content scripts per board
+- Dashboard with overview / applications / CVs / profile / settings tabs
+- CV upload + parsing
+- Fit analysis via gpt-5-mini
+
+---
+
+## 16. Phase status & roadmap
+
+From [`ROADMAP.md`](./ROADMAP.md):
+
+| Phase | What | Status |
+|---|---|---|
+| 0 | Backend provider routing | ✅ Done |
+| 1 | Settings UI + Ollama smoke test | ✅ Done |
+| 2 | PyInstaller backend bundle | ✅ Done |
+| 3 | Tauri shell + subprocess management | ✅ Done |
+| 4 | First-run wizard + model downloader | ✅ Done |
+| 5 | Real `.dmg` / `.msi` installers | ✅ Done |
+| **A** | **Bundle Ollama binary into installer** | **Next** |
+| 6 | Code signing + notarization | Optional ($99/yr) |
+| 7 | CI release pipeline (GitHub Actions) | Optional |
+| 8 | Auto-update via Tauri updater | Optional |
+
+Phase A is the recommended next step — bundles Ollama so users get a fully self-contained installer (one `.dmg`, no separate Ollama install). See ROADMAP section 4 Phase A discussion.
+
+---
+
+## 17. Context for resuming in a new chat
+
+If you're a future AI assistant picking up this project, here's what you need to know in 60 seconds.
+
+**What's already built:** A complete cross-platform desktop app (Tauri 2.x), Chrome extension (Manifest V3), FastAPI backend with 50+ routes, SQLite database with 8 tables, and a vanilla-JS dashboard. ~3000 lines of Python + 2500 lines of JavaScript + 500 lines of Rust + 400 lines of CSS/HTML. Supports both Azure OpenAI (`gpt-5-mini`) and Ollama (local) with per-task routing.
+
+**Where work is most likely to land:**
+
+- Adding new fields to `Profile` model → also add to `routes/profile.py`, `website/index.html` profile form, `extension/content/autofill.js` FIELD_MAP
+- Adding new application-form labels for autofill → just expand FIELD_MAP in `autofill.js`
+- New LLM-using features → call `_chat(messages, task=...)` from `services/analyzer.py`. Never call OpenAI/Ollama clients directly.
+- New seed questions → edit `services/answer_bank.py` (list of tuples), `POST /questions/seed-bank` is idempotent
+- New routes → add to `routes/`, register in `main.py`
+
+**Coding conventions:**
+
+- Python: FastAPI + SQLAlchemy 2.0, sync sessions, Pydantic v2, type hints everywhere
+- JS: vanilla, `$(sel)` = `document.querySelector`, `$all(sel)` = Array.from(querySelectorAll), `esc(s)` = HTML escape
+- Rust: Tauri 2.x (NOT 1.x — `Emitter` is a separate trait from `Manager`, must be imported explicitly)
+- Every LLM call passes `task=` keyword for routing + usage logging
+- Dashboard uses `window.location.origin` for API base (no hardcoded ports)
+- Database schema migrations are additive-only via `ensure_schema()` — never drop or rename in place
+
+**Things NOT to do without asking:**
+
+- Don't rewrite the backend in another framework
+- Don't switch Tauri to Electron (size + perf reasons)
+- Don't add server-side auth or hosting (single-user localhost is the design)
+- Don't change SQLite to Postgres (single-user desktop app)
+- Don't paste API keys back into chat (rotate via Azure portal if exposed)
+
+**Most recently in flux:**
+
+- Bundled backend path resolution in installed `.app` — fixed with 4-candidate search but may need `cargo clean` rebuild
+- Azure key now lives in DB (UI-editable) — no more `config.py` editing required
+- Layered `.env` loader — backend/, ~/Library/Application Support/JobApplyAssistant/, etc.
+
+**Start by reading:**
+
+1. This README (you're here)
+2. [`ROADMAP.md`](./ROADMAP.md) for phased plan
+3. `backend/app/services/analyzer.py` for the LLM routing logic — most central piece
+4. `desktop/src-tauri/src/backend.rs` for how the desktop app spawns the FastAPI backend
+
+**To verify everything works locally before starting:**
+
+```
+cd backend && bash run.sh                          # backend on :8000
+curl http://localhost:8000/health                  # should return JSON with api_key_set, dotenv_path
+curl http://localhost:8000/analytics/overview      # should return stats
+# Browser: http://localhost:8000/dashboard/        # should show the dashboard
+```
+
+If all three work, the codebase is healthy.
 
 ---
 

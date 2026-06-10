@@ -390,6 +390,30 @@
       </div>
     </div>
 
+    <div class="card" id="azure-creds-card">
+      <h3>Azure OpenAI credentials</h3>
+      <p class="muted">Used for Cloud and Hybrid modes. Paste your key here so you don't have to edit config.py or .env. Stored in your local database — never sent anywhere except Azure itself.</p>
+      <div class="grid" style="grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+        <label>API key <span id="azure-key-status" style="font-size:11px;color:#16a34a"></span>
+          <input id="azure-api-key" type="password" placeholder="paste your Azure OpenAI key…" autocomplete="off"/>
+        </label>
+        <label>Deployment name
+          <input id="azure-deployment" type="text" placeholder="gpt-5-mini"/>
+        </label>
+        <label>Endpoint URL
+          <input id="azure-endpoint" type="url" placeholder="https://your-resource.openai.azure.com/"/>
+        </label>
+        <label>API version
+          <input id="azure-api-version" type="text" placeholder="2024-02-15-preview"/>
+        </label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap">
+        <button id="save-azure">Save Azure credentials</button>
+        <button id="clear-azure" class="danger">Clear stored key</button>
+        <span id="azure-save-status" class="muted"></span>
+      </div>
+    </div>
+
     <div class="card">
       <h3>Network</h3>
       <label>API base URL
