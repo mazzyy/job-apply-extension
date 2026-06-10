@@ -17,29 +17,63 @@ def _extract_sender_domain(headers_text: str) -> str | None:
     return m.group(1).lower() if m else None
 
 
-def guess_application(db: Session, email_text: str, sender_domain: str | None) -> Application | None:
-    """Best-effort: match by company name in subject/body, then by sender domain."""
-    # 1. Domain match against application URL
+# Job platforms / ATS providers. Emails from these domains are sent ON BEHALF of
+# the actual company — never match applications by these domains, otherwise every
+# LinkedIn/Workday notification matches a random "linkedin" application.
+PLATFORM_NAMES = {
+    "linkedin", "workday", "myworkday", "myworkdayjobs", "greenhouse", "lever",
+    "ashbyhq", "smartrecruiters", "personio", "softgarden", "indeed", "stepstone",
+    "xing", "successfactors", "icims", "taleo", "bamboohr", "teamtailor", "join",
+    "otta", "glassdoor", "monster", "recruitee", "workable", "jobvite",
+}
+
+
+def _is_platform(name: str | None) -> bool:
+    if not name:
+        return False
+    n = name.strip().lower()
+    return any(p in n for p in PLATFORM_NAMES)
+
+
+def guess_application(db: Session, email_text: str, sender_domain: str | None,
+                      company_hint: str | None = None) -> Application | None:
+    """Best-effort match: company hint (from classifier) > sender domain > name in body.
+    Platform domains (linkedin.com, myworkday.com, …) and platform-named applications
+    are excluded — they would match everything."""
+    rows = db.query(Application).all()
+    candidates = [a for a in rows if not _is_platform(a.company)]
+
+    # 0. Company hint from the classifier ("your application was sent to ACME")
+    if company_hint and not _is_platform(company_hint):
+        hint = company_hint.strip().lower()
+        if len(hint) >= 3:
+            best, best_len = None, 0
+            for a in candidates:
+                cname = (a.company or "").strip().lower()
+                if not cname:
+                    continue
+                if (cname in hint or hint in cname) and len(cname) > best_len:
+                    best, best_len = a, len(cname)
+            if best:
+                return best
+
+    # 1. Domain match against application URL/company — skip platform domains
     if sender_domain:
         base = sender_domain.split(".")[-2] if "." in sender_domain else sender_domain
-        rows = db.query(Application).all()
-        for a in rows:
-            if a.url and base in a.url.lower():
-                return a
-            if a.company and base in a.company.lower():
-                return a
+        if not _is_platform(base) and not _is_platform(sender_domain):
+            for a in candidates:
+                if a.url and base in a.url.lower():
+                    return a
+                if a.company and base in a.company.lower():
+                    return a
 
-    # 2. Company name substring match
+    # 2. Company name substring match in the email text
     lower = email_text.lower()
-    rows = db.query(Application).filter(Application.company != None).all()
-    best = None
-    best_len = 0
-    for a in rows:
-        if not a.company:
-            continue
-        cname = a.company.strip().lower()
+    best, best_len = None, 0
+    for a in candidates:
+        cname = (a.company or "").strip().lower()
         if len(cname) >= 3 and cname in lower and len(cname) > best_len:
-            best = a; best_len = len(cname)
+            best, best_len = a, len(cname)
     return best
 
 
@@ -64,6 +98,20 @@ JSON schema:
   "salary_mentioned": "<extracted salary string if any, else null>",
   "next_action": "<what the user should do next>"
 }}
+IMPORTANT rules:
+- Submission confirmations ("your application was sent to X", "we received your
+  application", "Danke für deine Bewerbung", "thank you for applying") are
+  "acknowledgment" with suggested_status "applied". Set sender_company to the COMPANY
+  APPLIED TO (named in subject/body), never the platform (LinkedIn, Workday, …).
+- Account housekeeping (verify your candidate account, set your password, confirm
+  your email) is "acknowledgment" with suggested_status null — not a next step.
+- Job-board alert blasts (Stepstone/Indeed/LinkedIn/XING/Instaffo "N companies are looking
+  for you", "recommended jobs", newsletters, salary/marketing mails) are "unrelated" —
+  they are NOT recruiter outreach, even if they mention jobs.
+- "recruiter_reachout" is ONLY a personal message written to this specific candidate
+  about a specific role.
+- Only classify as a response kind (rejection/interview_invite/offer/next_step/acknowledgment)
+  if the email responds to the candidate's OWN application.
 Be conservative — only set confidence > 0.7 if very clear."""
     text = _chat(
         [

@@ -39,6 +39,17 @@ def ensure_schema():
         ("app_settings", "azure_endpoint", "VARCHAR(500)"),
         ("app_settings", "azure_deployment", "VARCHAR(120)"),
         ("app_settings", "azure_api_version", "VARCHAR(40)"),
+        ("app_settings", "gmail_address", "VARCHAR(200)"),
+        ("app_settings", "gmail_app_password", "VARCHAR(100)"),
+        ("app_settings", "gmail_enabled", "INTEGER DEFAULT 0"),
+        ("app_settings", "gmail_lookback_days", "INTEGER DEFAULT 30"),
+        ("app_settings", "gmail_last_uid", "INTEGER"),
+        ("app_settings", "gmail_last_sync_at", "DATETIME"),
+        ("app_settings", "gmail_last_error", "TEXT"),
+        ("processed_emails", "next_action", "VARCHAR(400)"),
+        ("processed_emails", "snippet", "TEXT"),
+        ("processed_emails", "source", "VARCHAR(20)"),
+        ("chat_messages", "thread_id", "INTEGER"),
     ]
     with engine.begin() as conn:
         for table, col, ddl in add_cols:

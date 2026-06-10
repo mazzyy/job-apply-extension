@@ -106,6 +106,11 @@ class Settings:
     # --- Static-file dir (for serving the dashboard from FastAPI) ---
     @staticmethod
     def _website_dir() -> Path:
+        # 1. Explicit override — lets an installed app serve a live website folder
+        #    (dashboard updates without rebuilding the PyInstaller bundle).
+        forced = os.environ.get("JAA_WEBSITE_DIR")
+        if forced and Path(forced).expanduser().is_dir():
+            return Path(forced).expanduser()
         if getattr(sys, "frozen", False):
             base = Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS") else Path(sys.executable).parent
             return base / "website"

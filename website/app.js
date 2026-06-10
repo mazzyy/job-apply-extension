@@ -1137,3 +1137,221 @@ $all(".sidebar a").forEach(a => a.addEventListener("click", () => {
   if (a.dataset.tab === "chat") { loadChatTab(); startChatPoll(); }
   else stopChatPoll();
 }));
+
+
+/* ============================== Gmail · job responses ============================== */
+const KIND_LABELS = {
+  rejection: "Rejected", interview_invite: "Interview", offer: "Offer",
+  recruiter_reachout: "Recruiter", next_step: "Next step",
+  acknowledgment: "Received", follow_up: "Follow-up",
+};
+const AVATAR_COLORS = ["#6366f1","#0ea5e9","#10b981","#f59e0b","#ef4444","#8b5cf6","#14b8a6","#f43f5e"];
+
+function senderName(s){ return (s || "?").replace(/<.*>/, "").replace(/"/g, "").trim() || "?"; }
+function avatarFor(name){
+  const c = AVATAR_COLORS[(name.charCodeAt(0) || 0) % AVATAR_COLORS.length];
+  return `<div class="mail-avatar" style="background:${c}">${esc(name[0].toUpperCase())}</div>`;
+}
+function timeAgo(iso){
+  if (!iso) return "";
+  const d = new Date(iso), now = new Date();
+  const days = Math.floor((now - d) / 86400000);
+  if (days === 0) return d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+  if (days === 1) return "yesterday";
+  if (days < 7) return days + "d ago";
+  return d.toLocaleDateString();
+}
+
+async function refreshGmail(){
+  let st;
+  try { st = await API.get("/emails/gmail/status"); } catch { return; }
+  const badge = $("#gmail-badge");
+  $("#gmail-connect-form").style.display = st.connected ? "none" : "";
+  $("#gmail-connected-box").style.display = st.connected ? "" : "none";
+  $("#gmail-sync-now").style.display = st.connected ? "" : "none";
+  $("#gmail-rescan").style.display = st.connected ? "" : "none";
+  $("#gmail-disconnect").style.display = st.connected ? "" : "none";
+  if (st.connected) {
+    badge.innerHTML = `<span style="color:#16a34a">●</span> ${esc(st.address)}` +
+      (st.last_sync_at ? ` · synced ${esc(timeAgo(st.last_sync_at))}` : " · first sync runs automatically");
+    if (st.last_error) $("#gmail-status").textContent = "Last error: " + st.last_error;
+    try { renderInboxSummary(await API.get("/emails/gmail/summary")); } catch {}
+    loadGmailEmails();
+  } else {
+    badge.innerHTML = `<span style="color:#94a3b8">○</span> not connected`;
+  }
+}
+
+const inboxFilter = { source: "", q: "", company: "", kind: "" };
+
+function renderInboxSummary(sum){
+  const box = $("#inbox-summary");
+  if (!box) return;
+  const k = sum.by_kind || {};
+  const cards = [
+    { n: k.interview_invite || 0, l: "Interviews", tone: "green", kind: "interview_invite" },
+    { n: k.offer || 0, l: "Offers", tone: "green", kind: "offer" },
+    { n: k.rejection || 0, l: "Rejections", tone: "red", kind: "rejection" },
+    { n: (k.recruiter_reachout || 0) + (k.next_step || 0), l: "Recruiter & next steps", tone: "blue", kind: "recruiter_reachout" },
+    { n: sum.this_week || 0, l: "This week", tone: "", kind: "" },
+  ];
+  box.innerHTML = cards.map(c => `
+    <div class="sum-card tone-${c.tone} ${inboxFilter.kind === c.kind && c.kind ? "active" : ""}" data-kind="${c.kind}">
+      <div class="sum-n">${c.n}</div><div class="sum-l">${c.l}</div>
+    </div>`).join("");
+  $all(".sum-card").forEach(c => c.addEventListener("click", () => {
+    inboxFilter.kind = (inboxFilter.kind === c.dataset.kind) ? "" : c.dataset.kind;
+    refreshGmail();
+  }));
+
+  // Company dropdown (preserve selection)
+  const sel = $("#inbox-company");
+  const cur = inboxFilter.company;
+  sel.innerHTML = '<option value="">All companies</option>' +
+    (sum.companies || []).map(c =>
+      `<option value="${esc(c.name)}" ${c.name === cur ? "selected" : ""}>${esc(c.name)} (${c.count})</option>`).join("");
+}
+
+async function loadGmailEmails(){
+  let rows;
+  const params = new URLSearchParams({ limit: 100 });
+  if (inboxFilter.q) params.set("q", inboxFilter.q);
+  if (inboxFilter.source) params.set("source", inboxFilter.source);
+  if (inboxFilter.company) params.set("company", inboxFilter.company);
+  if (inboxFilter.kind) params.set("kind", inboxFilter.kind);
+  try { rows = await API.get("/emails/gmail/processed?" + params); } catch { return; }
+  const box = $("#gmail-emails");
+  if (!rows.length) {
+    const filtered = inboxFilter.q || inboxFilter.source || inboxFilter.company || inboxFilter.kind;
+    box.innerHTML = `<div class="mail-empty">${filtered
+      ? "Nothing matches these filters."
+      : `No job responses yet.<br><span style="font-size:12px;">When a company replies to one of your applications, it shows up here and the application status updates automatically.</span>`}</div>`;
+    return;
+  }
+  const important = rows.filter(r => !["acknowledgment", "follow_up"].includes(r.kind));
+  const acks = rows.filter(r => ["acknowledgment", "follow_up"].includes(r.kind));
+  const render = r => {
+    const name = senderName(r.sender);
+    const label = KIND_LABELS[r.kind] || r.kind || "?";
+    return `<div class="mail-row" data-id="${r.id}">
+      ${avatarFor(name)}
+      <div class="mail-main">
+        <div class="mail-top">
+          <span class="mail-sender">${esc(name)}</span>
+          <span class="mail-time">${esc(timeAgo(r.received_at))}</span>
+        </div>
+        <div class="mail-subject">${esc(r.subject || "(no subject)")}</div>
+        <div class="mail-snippet">${esc(r.snippet || r.summary || "")}</div>
+        <div class="mail-meta">
+          <span class="mail-chip chip-${esc(r.kind)}">${esc(label)}</span>
+          ${r.application ? `<span class="mail-app">${esc(r.application)}</span>` : ""}
+          ${r.status_changed ? `<span class="mail-updated">✓ status updated</span>` : ""}
+          <button class="mail-dismiss" data-dismiss="${r.id}" title="Dismiss — not a job response">✕</button>
+        </div>
+        <div class="mail-detail">
+          ${r.summary ? `<div><b>Summary:</b> ${esc(r.summary)}</div>` : ""}
+          ${r.next_action ? `<div style="margin-top:4px;"><b>Suggested next step:</b> ${esc(r.next_action)}</div>` : ""}
+          ${r.application_id ? `<div style="margin-top:4px;"><a href="#applications" onclick="document.querySelector('[data-tab=applications]').click()">Open application →</a></div>` : ""}
+        </div>
+      </div>
+    </div>`;
+  };
+
+  let html = important.map(render).join("");
+  if (!important.length) {
+    html += `<div class="mail-empty" style="padding:20px 12px;">Nothing needs your attention — no rejections, interviews, or offers yet.</div>`;
+  }
+  if (acks.length) {
+    html += `<details class="mail-acks"${important.length ? "" : " open"}>
+      <summary>Application confirmations &amp; receipts (${acks.length})</summary>
+      ${acks.map(render).join("")}
+    </details>`;
+  }
+  box.innerHTML = html;
+
+  $all(".mail-row").forEach(row => row.addEventListener("click", e => {
+    if (e.target.closest("[data-dismiss]") || e.target.closest("a")) return;
+    row.classList.toggle("open");
+  }));
+  $all("[data-dismiss]").forEach(b => b.addEventListener("click", async () => {
+    try { await API.del("/emails/gmail/processed/" + b.dataset.dismiss); } catch {}
+    b.closest(".mail-row")?.remove();
+    if (!$("#gmail-emails .mail-row")) loadGmailEmails();
+  }));
+}
+
+$("#gmail-connect")?.addEventListener("click", async () => {
+  const status = $("#gmail-status");
+  status.textContent = "Testing login…";
+  try {
+    await API.post("/emails/gmail/connect", {
+      address: $("#gmail-address").value,
+      app_password: $("#gmail-password").value,
+      lookback_days: +$("#gmail-lookback").value,
+    });
+    status.textContent = "Connected. Running first scan — this can take a minute…";
+    refreshGmail();
+    const r = await API.post("/emails/gmail/sync", {});
+    status.textContent = r.ok
+      ? `Scan done — ${r.classified} job-related of ${r.fetched} emails checked, ${r.status_changes} status updates.`
+      : (r.error === "Sync already running" ? "First scan is running in the background…" : "Sync error: " + (r.error || "unknown"));
+    refreshGmail();
+  } catch (e) { status.textContent = "Failed: " + e.message; }
+});
+
+$("#gmail-sync-now")?.addEventListener("click", async () => {
+  const status = $("#gmail-status");
+  status.textContent = "Checking for new mail…";
+  try {
+    const r = await API.post("/emails/gmail/sync", {});
+    if (r.ok) status.textContent = r.fetched
+      ? `${r.fetched} new emails checked — ${r.classified} job-related, ${r.status_changes} status updates.`
+      : "No new mail.";
+    else status.textContent = r.error === "Sync already running"
+      ? "A sync is already running — results appear shortly." : "Error: " + (r.error || "unknown");
+    refreshGmail();
+  } catch (e) { status.textContent = "Failed: " + e.message; }
+});
+
+$("#gmail-rescan")?.addEventListener("click", async () => {
+  const status = $("#gmail-status");
+  status.textContent = "Re-scanning the whole window with current rules — this can take a minute…";
+  try {
+    const r = await API.post("/emails/gmail/rescan", {});
+    status.textContent = r.ok
+      ? `Re-scan done — ${r.classified} job-related of ${r.fetched} emails, ${r.status_changes} status updates.`
+      : "Error: " + (r.error || "unknown");
+    refreshGmail();
+  } catch (e) { status.textContent = "Failed: " + e.message; }
+});
+
+$("#gmail-disconnect")?.addEventListener("click", async () => {
+  try { await API.post("/emails/gmail/disconnect", {}); } catch {}
+  $("#gmail-status").textContent = "Disconnected.";
+  refreshGmail();
+});
+
+$all(".inbox-tab").forEach(t => t.addEventListener("click", () => {
+  $all(".inbox-tab").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  inboxFilter.source = t.dataset.source;
+  loadGmailEmails();
+}));
+
+let inboxSearchTimer = null;
+$("#inbox-search")?.addEventListener("input", e => {
+  clearTimeout(inboxSearchTimer);
+  inboxSearchTimer = setTimeout(() => {
+    inboxFilter.q = e.target.value.trim();
+    loadGmailEmails();
+  }, 250);
+});
+
+$("#inbox-company")?.addEventListener("change", e => {
+  inboxFilter.company = e.target.value;
+  loadGmailEmails();
+});
+
+$all(".sidebar a").forEach(a => a.addEventListener("click", () => {
+  if (a.dataset.tab === "inbox") refreshGmail();
+}));

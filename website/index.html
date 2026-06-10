@@ -278,13 +278,72 @@
   </section>
 
   <section id="tab-inbox" class="tab">
-    <h1>Inbox · email parser</h1>
+    <h1>Inbox · job responses</h1>
+
+    <div class="card" id="gmail-card">
+      <div class="inbox-header">
+        <div>
+          <h3 style="margin:0;">Job responses</h3>
+          <p class="muted" style="margin:4px 0 0;font-size:12px;">
+            All mail is read locally — only real responses to your applications show up here.
+          </p>
+        </div>
+        <div class="inbox-header-actions">
+          <span id="gmail-badge" class="muted" style="font-size:12px;">checking…</span>
+          <button class="btn" id="gmail-sync-now" style="display:none;">Sync now</button>
+          <button class="btn secondary" id="gmail-rescan" style="display:none;" title="Clear the feed and re-classify everything with the latest rules">Re-scan</button>
+          <button class="btn secondary" id="gmail-disconnect" style="display:none;">Disconnect</button>
+        </div>
+      </div>
+
+      <div id="gmail-connect-form" style="display:none;">
+        <p class="muted" style="font-size:12.5px;">
+          Connects via IMAP with a Google <b>app password</b> (not your normal password).
+          Enable 2-Step Verification, then create one at
+          <a href="https://myaccount.google.com/apppasswords" target="_blank">myaccount.google.com/apppasswords</a>.
+        </p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <input class="input" id="gmail-address" type="email" placeholder="you@gmail.com" style="flex:1;min-width:180px;" />
+          <input class="input" id="gmail-password" type="password" placeholder="16-char app password" style="flex:1;min-width:180px;" />
+          <select id="gmail-lookback" class="input" style="width:auto;">
+            <option value="7">Scan last 7 days</option>
+            <option value="30" selected>Scan last 30 days</option>
+            <option value="90">Scan last 90 days</option>
+          </select>
+          <button class="btn" id="gmail-connect">Connect Gmail</button>
+        </div>
+      </div>
+
+      <div id="gmail-connected-box" style="display:none;">
+        <div class="inbox-summary" id="inbox-summary"></div>
+        <div class="inbox-toolbar">
+          <div class="inbox-tabs" id="inbox-tabs">
+            <button class="inbox-tab active" data-source="">All</button>
+            <button class="inbox-tab" data-source="linkedin">LinkedIn</button>
+            <button class="inbox-tab" data-source="other">Companies</button>
+          </div>
+          <input class="input inbox-search" id="inbox-search" type="search" placeholder="Search sender, subject, company…" />
+          <select class="input inbox-company" id="inbox-company">
+            <option value="">All companies</option>
+          </select>
+        </div>
+        <div class="mail-list" id="gmail-emails"></div>
+      </div>
+      <div id="gmail-status" class="muted" style="font-size:12px;margin-top:8px;"></div>
+    </div>
+
     <div class="card">
-      <h3>Paste a recruiter email</h3>
-      <p class="muted">Paste an interview invite, rejection, or recruiter message. We classify it and update the matching application's status.</p>
-      <textarea id="email-text" rows="10" placeholder="Hi Sain, We'd love to invite you for an interview..."></textarea>
-      <button id="parse-email">Parse email</button>
-      <div id="email-result"></div>
+      <details>
+        <summary style="cursor:pointer;font-weight:600;font-size:13.5px;">
+          Paste an email manually
+          <span class="muted" style="font-weight:400;"> — for mail that lives outside Gmail</span>
+        </summary>
+        <div style="margin-top:10px;">
+          <textarea id="email-text" rows="8" placeholder="Hi Sain, We'd love to invite you for an interview..."></textarea>
+          <button id="parse-email">Parse email</button>
+          <div id="email-result"></div>
+        </div>
+      </details>
     </div>
   </section>
 

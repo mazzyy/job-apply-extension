@@ -23,6 +23,32 @@ Base.metadata.create_all(bind=engine)
 ensure_schema()
 
 
+async def _gmail_poll_loop():
+    """Poll Gmail every 5 minutes when connected. IMAP is blocking → thread."""
+    import asyncio
+    from .database import SessionLocal
+    from .models import AppSettings
+    from .services import gmail_sync
+    await asyncio.sleep(30)   # let the app settle after boot
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                row = db.query(AppSettings).first()
+                enabled = bool(row and row.gmail_enabled and row.gmail_app_password)
+            finally:
+                db.close()
+            if enabled:
+                db = SessionLocal()
+                try:
+                    await asyncio.to_thread(gmail_sync.sync, db)
+                finally:
+                    db.close()
+        except Exception as e:
+            log.warning("gmail poll loop error: %s", e)
+        await asyncio.sleep(300)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup verification — runs once when uvicorn boots.
@@ -35,7 +61,10 @@ async def lifespan(app: FastAPI):
         log.error("✗ Model verification FAILED: %s", info.get("error"))
         log.error("  → Check AZURE_OPENAI_DEPLOYMENT/API_KEY/API_VERSION in backend/.env")
     app.state.model_status = info
+    import asyncio
+    poll_task = asyncio.create_task(_gmail_poll_loop())
     yield
+    poll_task.cancel()
 
 
 app = FastAPI(title="Job Apply Assistant API", version="0.2.1", lifespan=lifespan)

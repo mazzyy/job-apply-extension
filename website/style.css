@@ -277,3 +277,54 @@ dialog::backdrop { background: rgba(15,23,42,.55); }
 .chat-msg.assistant { align-self: flex-start; background: #f3f4f6; color: #111827; border-bottom-left-radius: 4px; }
 .chat-msg .chat-job { display: block; font-size: 11px; opacity: .7; margin-top: 4px; }
 .chat-typing { font-style: italic; opacity: .7; }
+
+/* --- Inbox: mail-style job-response feed --- */
+.inbox-header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
+.inbox-header-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.mail-list { display:flex; flex-direction:column; border-top:1px solid #e5e7eb; }
+.mail-row { display:flex; gap:12px; padding:12px 6px; border-bottom:1px solid #eef0f4; cursor:pointer; transition:background .12s; align-items:flex-start; }
+.mail-row:hover { background:#f8fafc; }
+.mail-avatar { width:38px; height:38px; border-radius:50%; flex-shrink:0; display:grid; place-items:center; font-weight:700; font-size:15px; color:#fff; }
+.mail-main { flex:1; min-width:0; }
+.mail-top { display:flex; align-items:baseline; gap:8px; }
+.mail-sender { font-weight:600; font-size:13.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:220px; }
+.mail-time { margin-left:auto; font-size:11.5px; color:#94a3b8; white-space:nowrap; }
+.mail-subject { font-size:13px; color:#111827; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mail-snippet { font-size:12px; color:#64748b; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mail-meta { display:flex; align-items:center; gap:6px; margin-top:6px; flex-wrap:wrap; }
+.mail-chip { font-size:11px; font-weight:700; padding:2px 9px; border-radius:999px; }
+.chip-rejection { background:#fee2e2; color:#b91c1c; }
+.chip-interview_invite { background:#dcfce7; color:#15803d; }
+.chip-offer { background:#dcfce7; color:#15803d; }
+.chip-recruiter_reachout { background:#dbeafe; color:#1d4ed8; }
+.chip-next_step { background:#dbeafe; color:#1d4ed8; }
+.chip-acknowledgment, .chip-follow_up { background:#f1f5f9; color:#475569; }
+.mail-app { font-size:11.5px; color:#475569; background:#f1f5f9; padding:2px 9px; border-radius:999px; }
+.mail-updated { font-size:11.5px; color:#15803d; font-weight:600; }
+.mail-dismiss { margin-left:auto; background:none; border:none; color:#cbd5e1; cursor:pointer; font-size:15px; padding:2px 6px; border-radius:6px; }
+.mail-row:hover .mail-dismiss { color:#94a3b8; }
+.mail-dismiss:hover { background:#fee2e2; color:#b91c1c; }
+.mail-detail { display:none; margin-top:8px; padding:10px 12px; background:#f8fafc; border-radius:10px; font-size:12.5px; line-height:1.55; color:#334155; }
+.mail-row.open .mail-detail { display:block; }
+.mail-empty { text-align:center; color:#94a3b8; font-size:13px; padding:36px 12px; }
+
+.mail-acks { border-top: 1px solid #e5e7eb; margin-top: 4px; }
+.mail-acks summary { cursor: pointer; padding: 10px 6px; font-size: 12.5px; font-weight: 600; color: #64748b; user-select: none; }
+.mail-acks summary:hover { color: #334155; }
+
+/* --- Inbox summary + toolbar --- */
+.inbox-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; margin-bottom:14px; }
+.sum-card { background:#f8fafc; border:1px solid #eef0f4; border-radius:12px; padding:10px 14px; cursor:pointer; transition:border .15s, background .15s; }
+.sum-card:hover { border-color:#c7d2fe; }
+.sum-card.active { background:#eef2ff; border-color:#6366f1; }
+.sum-card .sum-n { font-size:20px; font-weight:800; letter-spacing:-0.02em; }
+.sum-card .sum-l { font-size:11px; color:#64748b; font-weight:600; margin-top:1px; }
+.sum-card.tone-green .sum-n { color:#15803d; }
+.sum-card.tone-red .sum-n { color:#b91c1c; }
+.sum-card.tone-blue .sum-n { color:#1d4ed8; }
+.inbox-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+.inbox-tabs { display:flex; background:#f1f5f9; border-radius:10px; padding:3px; gap:2px; }
+.inbox-tab { border:none; background:transparent; padding:6px 14px; border-radius:8px; font-size:12.5px; font-weight:600; color:#64748b; cursor:pointer; transition:all .15s; }
+.inbox-tab.active { background:#fff; color:#111827; box-shadow:0 1px 3px rgba(15,23,42,.1); }
+.inbox-search { flex:1; min-width:160px; max-width:320px; }
+.inbox-company { width:auto; max-width:200px; }

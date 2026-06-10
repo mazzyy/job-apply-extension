@@ -25,4 +25,13 @@ class AppSettings(Base):
     azure_deployment = Column(String(120), nullable=True)
     azure_api_version = Column(String(40), nullable=True)
 
+    # Gmail (IMAP + app password). Plain in SQLite — single-user local app.
+    gmail_address = Column(String(200), nullable=True)
+    gmail_app_password = Column(String(100), nullable=True)
+    gmail_enabled = Column(Integer, default=0)          # 0/1
+    gmail_lookback_days = Column(Integer, default=30)   # first-sync window
+    gmail_last_uid = Column(Integer, nullable=True)     # incremental sync cursor
+    gmail_last_sync_at = Column(DateTime, nullable=True)
+    gmail_last_error = Column(Text, nullable=True)
+
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

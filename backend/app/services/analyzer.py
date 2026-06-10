@@ -455,3 +455,32 @@ Answer:"""
     except Exception as e:
         log.exception("answer_application_question failed")
         return f"(could not draft an answer: {e})"
+
+
+def _chat_stream(messages, *, max_tokens: int = 1500, task: str = "chat"):
+    """Streaming variant of _chat — yields content deltas as they arrive.
+    Mirrors the provider routing; tries max_completion_tokens first (reasoning
+    models), falls back to max_tokens. Usage is not logged for streamed calls."""
+    provider, model = _resolve_provider(task)
+    log.info("LLM stream task=%s provider=%s model=%s", task, provider, model)
+    client = _cloud_client() if provider == "cloud" else _local_client()
+
+    stream = None
+    last_err = None
+    for param in ("max_completion_tokens", "max_tokens"):
+        try:
+            stream = client.chat.completions.create(
+                model=model, messages=messages, stream=True, **{param: max_tokens})
+            break
+        except Exception as e:
+            last_err = e
+    if stream is None:
+        raise RuntimeError(f"stream start failed: {last_err}")
+
+    for chunk in stream:
+        try:
+            delta = chunk.choices[0].delta.content if chunk.choices else None
+        except (AttributeError, IndexError):
+            delta = None
+        if delta:
+            yield delta
