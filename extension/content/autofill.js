@@ -20,8 +20,8 @@
     { keys: ["phone", "mobile", "telephone", "telefon", "tel", "rufnummer"], src: "phone" },
     { keys: ["city", "stadt", "ort", "wohnort"], src: "city" },
     { keys: ["country", "land"], src: "country" },
-    { keys: ["street", "straße", "strasse", "address", "anschrift", "adresse"], src: "city" },
-    { keys: ["postal code", "zip", "plz", "postleitzahl"], src: "city" },
+    // NOTE: street / postal-code intentionally NOT mapped — the profile has no
+    // address fields, and filling them with the city name puts wrong data in forms.
     { keys: ["linkedin"], src: "linkedin_url" },
     { keys: ["xing"], src: "linkedin_url" },
     { keys: ["github"], src: "github_url" },

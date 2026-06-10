@@ -58,7 +58,10 @@ async def all_exception_handler(request: Request, exc: Exception):
 
 
 @app.get("/")
-def root():
+def root(request: Request):
+    # Redirect to the dashboard when it's bundled (Tauri / packaged build).
+    if getattr(request.app.state, "dashboard_mounted", False):
+        return RedirectResponse(url="/dashboard/")
     return {"status": "ok", "service": "job-apply-assistant",
             "model": settings.AZURE_OPENAI_DEPLOYMENT}
 
@@ -102,7 +105,6 @@ import os
 _website = settings.WEBSITE_DIR if hasattr(settings, "WEBSITE_DIR") else None
 if _website and os.path.isdir(str(_website)):
     app.mount("/dashboard", StaticFiles(directory=str(_website), html=True), name="dashboard")
-
-    @app.get("/", include_in_schema=False)
-    def root_redirect():
-        return RedirectResponse(url="/dashboard/")
+    # NOTE: don't register a second @app.get("/") here — FastAPI keeps the first
+    # matching route, so a duplicate would never fire. root() checks this flag instead.
+    app.state.dashboard_mounted = True

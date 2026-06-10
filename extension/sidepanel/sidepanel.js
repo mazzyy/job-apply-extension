@@ -15,7 +15,8 @@ function fitTone(score){
 }
 function setStatus(el, msg, kind){
   el.className = "status-line" + (kind ? " " + kind : "");
-  el.innerHTML = msg || "";
+  // textContent, not innerHTML — messages can include backend/page-derived strings.
+  el.textContent = msg || "";
 }
 function setLoadingStatus(el, msg){
   el.className = "status-line";

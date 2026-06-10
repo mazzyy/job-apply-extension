@@ -11,24 +11,37 @@
   if (window.__jaaApplyWatcherLoaded) return;
   window.__jaaApplyWatcherLoaded = true;
 
-  const APPLY_PATTERNS = [
-    /\bapply\b/i,
+  // STRONG patterns are unambiguous — trusted even cross-site (e.g. LinkedIn
+  // handed off to a company career site).
+  const STRONG_PATTERNS = [
     /\bsubmit\s+application\b/i,
-    /\beasy\s+apply\b/i,
     /\bsend\s+application\b/i,
+    /\beasy\s+apply\b/i,
+    /\bbewerbung\s+(absenden|senden|abschicken)\b/i, // German
+  ];
+  // WEAK patterns ("Apply", "Submit") only count on the same host we analyzed.
+  const WEAK_PATTERNS = [
+    /\bapply\b/i,
     /\bbewerben\b/i,          // German
     /\bpostuler\b/i,          // French
     /\baplicar\b/i,           // Spanish
     /^submit$/i,
   ];
+  // Buttons like "Apply filters" / "Apply changes" / "Apply coupon" must never match.
+  const EXCLUDE_PATTERN = /\b(filters?|changes?|settings?|coupon|promo|discount|code|theme|sort)\b/i;
 
-  function isApplyButton(el) {
-    if (!el || el === document.body) return false;
-    const tag = el.tagName;
-    if (!["BUTTON", "A", "INPUT"].includes(tag)) return false;
+  // Don't trust an analysis older than this for auto-marking.
+  const MAX_ANALYSIS_AGE_MS = 45 * 60 * 1000;
+
+  function applyMatchKind(el) {
+    if (!el || el === document.body) return null;
+    if (!["BUTTON", "A", "INPUT"].includes(el.tagName)) return null;
     const text = (el.innerText || el.value || el.getAttribute("aria-label") || "").trim();
-    if (!text || text.length > 80) return false;
-    return APPLY_PATTERNS.some(p => p.test(text));
+    if (!text || text.length > 80) return null;
+    if (EXCLUDE_PATTERN.test(text)) return null;
+    if (STRONG_PATTERNS.some(p => p.test(text))) return "strong";
+    if (WEAK_PATTERNS.some(p => p.test(text))) return "weak";
+    return null;
   }
 
   function toast(msg, kind = "good") {
@@ -46,19 +59,31 @@
     setTimeout(() => t.remove(), 4500);
   }
 
-  async function markApplied(buttonText) {
+  async function markApplied(buttonText, matchKind) {
     let state = {};
     try {
-      state = await chrome.storage.session.get(["lastApplicationId", "lastApplicationUrl"]);
+      state = await chrome.storage.session.get(["lastApplicationId", "lastApplicationUrl", "lastApplicationAt"]);
     } catch { /* session storage may not be available in some contexts */ }
     const id = state.lastApplicationId;
     if (!id) {
       console.debug("[JAA] Apply clicked but no application_id in session.");
       return;
     }
-    // Only auto-mark if we're on the same job URL we analyzed
-    if (state.lastApplicationUrl && !location.href.startsWith(state.lastApplicationUrl.split("?")[0])) {
-      // Different page — still mark, since LinkedIn opens apply in a modal
+    // Stale analysis — don't guess.
+    if (state.lastApplicationAt && Date.now() - state.lastApplicationAt > MAX_ANALYSIS_AGE_MS) {
+      console.debug("[JAA] Apply clicked but last analysis is stale — not auto-marking.");
+      return;
+    }
+    // URL guard: weak matches ("Apply") must be on the same host we analyzed.
+    // Strong matches ("Submit application") may be cross-host (career-site handoff).
+    if (state.lastApplicationUrl) {
+      try {
+        const analyzedHost = new URL(state.lastApplicationUrl).hostname;
+        if (matchKind !== "strong" && analyzedHost !== location.hostname) {
+          console.debug("[JAA] Apply clicked on a different site than analyzed — not auto-marking.");
+          return;
+        }
+      } catch { /* unparsable stored URL — fall through */ }
     }
     try {
       const resp = await chrome.runtime.sendMessage({
@@ -80,10 +105,11 @@
   document.addEventListener("click", (e) => {
     let el = e.target;
     for (let i = 0; i < 5 && el; i++) {
-      if (isApplyButton(el)) {
+      const kind = applyMatchKind(el);
+      if (kind) {
         const text = (el.innerText || el.value || el.getAttribute("aria-label") || "").trim();
         // Slight delay so the backend has time to know about the analyze that just happened
-        setTimeout(() => markApplied(text), 400);
+        setTimeout(() => markApplied(text, kind), 400);
         break;
       }
       el = el.parentElement;
