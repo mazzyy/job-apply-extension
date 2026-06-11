@@ -575,6 +575,143 @@
     });
   }
 
+  /* ------------ Harvest: collect Easy-Apply job links from a search page ------------ */
+  window.__jaaHarvestJobs = async function (maxJobs = 25) {
+    if (!/linkedin\.com\/jobs\/(search|collections)/.test(location.href)) {
+      // A /jobs/view url with currentJobId still has the list pane — allow it
+      if (!document.querySelector(".scaffold-layout__list, .jobs-search-results-list")) {
+        return { error: "Not a LinkedIn job search page." };
+      }
+    }
+    const found = new Map();   // id -> url
+    const listPane = document.querySelector(
+      ".scaffold-layout__list, .jobs-search-results-list, .jobs-search-results-list__list");
+
+    function collect() {
+      $all("a[href*='/jobs/view/']").forEach(a => {
+        const m = a.href.match(/\/jobs\/view\/(\d+)/);
+        if (!m) return;
+        const card = a.closest("li, .job-card-container, .jobs-search-results__list-item");
+        const txt = (card?.innerText || "").toLowerCase();
+        // Easy Apply only (search may include external-apply jobs even with the filter)
+        if (card && !/easy apply|easy-apply/i.test(txt)) return;
+        const id = m[1];
+        if (!found.has(id)) found.set(id, `https://www.linkedin.com/jobs/view/${id}/`);
+      });
+    }
+
+    // Scroll the list to lazy-load more cards
+    collect();
+    for (let i = 0; i < 12 && found.size < maxJobs; i++) {
+      if (listPane) listPane.scrollBy(0, 800);
+      else window.scrollBy(0, 800);
+      await wait(700);
+      collect();
+    }
+    // Try paginating once if we still want more
+    const nextPage = document.querySelector("button[aria-label='View next page'], .jobs-search-pagination__button--next");
+    if (found.size < maxJobs && nextPage && visible(nextPage)) {
+      nextPage.click();
+      await wait(2500);
+      collect();
+    }
+    return { urls: Array.from(found.values()).slice(0, maxJobs) };
+  };
+
+  /* ------------ Human-ish pacing helpers ------------ */
+  const rnd = (min, max) => min + Math.random() * (max - min);
+  async function humanPause(min, max) { await wait(Math.round(rnd(min, max))); }
+  async function humanScroll(el) {
+    // A few small, uneven scroll nudges like a person skimming
+    const target = el || document.scrollingElement;
+    const steps = Math.round(rnd(2, 4));
+    for (let i = 0; i < steps; i++) { target.scrollBy(0, rnd(120, 360)); await wait(rnd(180, 500)); }
+  }
+
+  /* ------------ Same-tab sequential apply on a search results page ------------
+   * Walks the job cards in the left results list, clicks each, applies in the
+   * right pane — one real session, one tab, human-like pacing. Returns a result
+   * array the background worker records. NOTE: pacing reduces but does NOT
+   * eliminate LinkedIn's ability to detect automation.
+   */
+  window.__jaaRunSearchSequential = async function (options = {}) {
+    const maxJobs = options.max || 10;
+    if (!document.querySelector(".scaffold-layout__list, .jobs-search-results-list")) {
+      return { error: "Not on a LinkedIn job search results page." };
+    }
+    const results = [];
+    const seen = new Set();
+
+    function cardList() {
+      return $all("li.scaffold-layout__list-item, li.jobs-search-results__list-item, .job-card-container--clickable")
+        .filter(visible);
+    }
+
+    let idx = 0;
+    while (results.length < maxJobs) {
+      const cards = cardList();
+      if (idx >= cards.length) {
+        // Try to load more by scrolling the list, then re-collect
+        const pane = document.querySelector(".scaffold-layout__list, .jobs-search-results-list");
+        if (pane) { pane.scrollBy(0, 1200); await wait(1500); }
+        const grown = cardList();
+        if (grown.length <= cards.length) break;     // no more jobs
+        continue;
+      }
+      const card = cards[idx++];
+      const link = card.querySelector("a[href*='/jobs/view/']");
+      const id = (link?.href.match(/\/jobs\/view\/(\d+)/) || [])[1];
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+
+      // Easy Apply only
+      if (!/easy apply/i.test(card.innerText || "")) continue;
+
+      // Behave like a person: scroll the card into view, pause to "read"
+      card.scrollIntoView({ block: "center" });
+      await humanPause(500, 1200);
+      (link || card).click();
+      await humanPause(1500, 3000);            // read the job
+
+      // Apply in the right pane (reuse the full guided/auto driver, no extra logging)
+      let r;
+      try {
+        r = await window.__jaaRunEasyApply({ autoSubmit: options.autoSubmit, noLog: true });
+      } catch (e) {
+        r = { error: e.message };
+      }
+      const job = r.job || {};
+      const status =
+        r.stopped === "submitted" ? "applied" :
+        (r.stopped === "needs_review" || r.stopped === "required_field_blank" || r.stopped === "validation_error") ? "needs_review" :
+        "failed";
+      results.push({
+        url: link?.href?.split("?")[0] || (id ? `https://www.linkedin.com/jobs/view/${id}/` : null),
+        job_title: job.job_title || null, company: job.company || null,
+        status, filled: r.filled || 0, cv_used: r.cv_used || null,
+        answers: (r.answered || []).map(a => ({ label: a.label, value: a.value })),
+        reason: status === "applied" ? null : (r.error || r.stopped || "unknown"),
+      });
+
+      try {
+        chrome.runtime.sendMessage({ type: "EASYAPPLY_PROGRESS",
+          step: results.length, filled: r.filled || 0,
+          note: `${status} · ${job.job_title || id}` });
+      } catch {}
+
+      // Captcha / checkpoint? Stop the whole run.
+      if (/checkpoint\/challenge|captcha|security verification/i.test(document.body.innerText + " " + location.href)) {
+        return { results, blocked: true };
+      }
+
+      // Human-like gap between applications (longer after a real submit)
+      await humanScroll(document.querySelector(".scaffold-layout__list"));
+      if (status === "applied") await humanPause(30000, 75000);
+      else await humanPause(6000, 14000);
+    }
+    return { results };
+  };
+
   /* ------------ Main driver ------------ */
   window.__jaaRunEasyApply = async function (options = {}) {
     const result = { steps: 0, filled: 0, blanks: [], stopped: null, api_errors: 0 };
@@ -587,10 +724,11 @@
     // 2. Already in the modal? Otherwise click Easy Apply
     let modal = getModal();
     if (!modal) {
-      // Wait briefly for the button to appear (right-pane might still be loading)
+      // Wait for the button to appear — LinkedIn job pages load slowly, especially
+      // a fresh tab opened by auto-apply. Be patient (up to ~12s).
       let ea = null;
       try {
-        ea = await waitFor(() => findEasyApplyButton(), "Easy Apply button", 4000);
+        ea = await waitFor(() => findEasyApplyButton(), "Easy Apply button", 12000);
       } catch {
         // On /jobs/search pages, the right pane may not have rendered yet.
         // Try clicking the highlighted job card to force-load the preview.
@@ -614,14 +752,32 @@
         }
         return { error: "No Easy Apply button found. Make sure you've clicked into a specific job (not the search results list), and the job actually offers Easy Apply (look for the LinkedIn icon next to 'Easy Apply' on the job card)." };
       }
-      ea.click();
-      try {
-        modal = await waitFor(() => getModal(), "Easy Apply modal", 7000);
-      } catch (e) {
-        return { error: "Easy Apply modal didn't open. The job may require external apply, or LinkedIn is showing a captcha." };
+      // Open the modal — retry the click a few times; LinkedIn sometimes ignores
+      // the first programmatic click while the page is still hydrating.
+      ea.scrollIntoView({ block: "center" });
+      await wait(400);
+      for (let attempt = 0; attempt < 3 && !modal; attempt++) {
+        const btn = findEasyApplyButton() || ea;
+        btn.click();
+        try {
+          modal = await waitFor(() => getModal(), "Easy Apply modal", 6000);
+        } catch { await wait(900); }
+      }
+      if (!modal) {
+        // Distinguish captcha / checkpoint from external-apply
+        const bodyTxt = document.body.innerText.toLowerCase();
+        if (/security check|captcha|verify you'?re a human|let'?s do a quick security check/i.test(bodyTxt)) {
+          return { error: "LinkedIn is showing a security check (captcha). Solve it once in the browser, then retry." };
+        }
+        const externalApply = Array.from(document.querySelectorAll("button, a"))
+          .find(b => visible(b) && /^\s*apply\b/i.test((b.innerText||"").trim()) && !/easy apply/i.test(b.innerText));
+        if (externalApply) {
+          return { error: "This job applies on the company's external site, not LinkedIn Easy Apply — skipped." };
+        }
+        return { error: "Easy Apply modal didn't open after 3 tries (page may have loaded slowly)." };
       }
     }
-    await wait(400);
+    await wait(600);
 
     // 3. Resolve job metadata once + log analyzed-or-applied row
     let job = null;
@@ -630,7 +786,7 @@
       const j = window.__jaaExtractJob();
       if (j) job = j;
     }
-    if (!applicationId && job) {
+    if (!applicationId && job && !options.noLog) {
       try {
         const r = await chrome.runtime.sendMessage({
           type: "API_POST", path: "/applications/log",
@@ -643,6 +799,7 @@
         applicationId = r?.data?.id || null;
       } catch {}
     }
+    result.job = job;
 
     const profile = await getProfile();
     const ctx = { profile, applicationId, answerCache: new Map() };

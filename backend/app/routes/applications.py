@@ -199,6 +199,8 @@ def add_event(app_id: int, body: dict, db: Session = Depends(get_db)):
 
 
 # ============================== Auto-apply ==============================
+import time as _time
+_worker_state = {"last_seen": 0.0, "last_action": None}
 import json as _json
 import re as _re
 from datetime import datetime as _dt, timedelta as _td
@@ -213,6 +215,8 @@ class QueueIn(_BM):
 class ToggleIn(_BM):
     enabled: bool
     daily_cap: int | None = None
+    mode: str | None = None        # session | tabs
+    portal_auto_submit: bool | None = None
 
 
 class AutoResultIn(_BM):
@@ -225,22 +229,61 @@ class AutoResultIn(_BM):
     company: str | None = None
 
 
+def _build_search_url(keyword: str) -> str:
+    from urllib.parse import quote
+    # Easy Apply filter (f_AL=true) so harvest only collects 1-click jobs
+    return f"https://www.linkedin.com/jobs/search/?keywords={quote(keyword)}&f_AL=true"
+
+
+_SF_HOST = ("successfactors", "sapsf")
+
+
+def _is_sf(low: str) -> bool:
+    return any(h in low for h in _SF_HOST)
+
+
+def _classify_queue_entry(entry: str):
+    """Returns (url, task, label, platform). task is 'apply' or 'harvest'."""
+    e = entry.strip()
+    if not e:
+        return None
+    low = e.lower()
+    if low.startswith("http"):
+        if _is_sf(low):
+            # SF job detail vs. a search/results listing
+            if any(k in low for k in ("/job/", "jobdetail", "requisition")):
+                return (e, "apply", "SuccessFactors job", "successfactors")
+            return (e, "harvest", "SuccessFactors search", "successfactors")
+        if "linkedin.com/jobs" in low:
+            if "/jobs/view/" in low and "/search" not in low:
+                return (e, "apply", None, "linkedin")
+            label = "Search: " + e.split("keywords=")[-1].split("&")[0][:40] if "keywords=" in low else "LinkedIn search"
+            return (e, "harvest", label, "linkedin")
+        return None
+    # Plain text → LinkedIn keyword search (portal keyword search needs a base URL the user provides)
+    return (_build_search_url(e), "harvest", f'Search: "{e}"', "linkedin")
+
+
 @router.post("/queue")
 def queue_jobs(body: QueueIn, db: Session = Depends(get_db)):
-    """Add LinkedIn job URLs to the auto-apply queue."""
+    """Queue entries: a Easy-Apply job URL applies directly; a search URL or a
+    plain keyword becomes a 'harvest' task that scrapes all Easy-Apply jobs and
+    queues each one."""
     created, skipped = [], 0
-    for url in body.urls:
-        url = url.strip()
-        if not url or "linkedin.com/jobs" not in url:
+    for entry in body.urls:
+        c = _classify_queue_entry(entry)
+        if not c:
             skipped += 1
             continue
-        # normalize: strip query params for dedupe
-        base_url = url.split("?")[0].rstrip("/")
-        exists = db.query(Application).filter(Application.url.like(base_url + "%")).first()
-        if exists and exists.status in ("queued", "applied"):
-            skipped += 1
-            continue
-        a = Application(url=url, source="auto-apply", status="queued", job_title=None, company=None)
+        url, task, label, platform = c
+        status = "queued_search" if task == "harvest" else "queued"
+        if task == "apply":
+            base_url = url.split("?")[0].rstrip("/")
+            exists = db.query(Application).filter(Application.url.like(base_url + "%")).first()
+            if exists and exists.status in ("queued", "applied"):
+                skipped += 1
+                continue
+        a = Application(url=url, source="auto-apply:" + platform, status=status, job_title=label)
         db.add(a); db.commit(); db.refresh(a)
         created.append(a.id)
     return {"queued": len(created), "skipped": skipped, "ids": created}
@@ -256,18 +299,50 @@ def auto_apply_status(db: Session = Depends(get_db)):
                      .filter(ApplicationEvent.kind == "auto_applied",
                              ApplicationEvent.created_at >= today_start).count())
     queued = db.query(Application).filter(Application.status == "queued").count()
-    nxt = (db.query(Application).filter(Application.status == "queued")
-           .order_by(Application.id.asc()).first())
+    searches = db.query(Application).filter(Application.status == "queued_search").count()
     cap = row.auto_apply_daily_cap or 15
+    enabled = bool(row.auto_apply_enabled)
+
+    mode = (row.auto_apply_mode or "session")
+    nxt = None
+    if enabled:
+        srow = (db.query(Application).filter(Application.status == "queued_search")
+                .order_by(Application.id.asc()).first())
+        arow = (db.query(Application).filter(Application.status == "queued")
+                .order_by(Application.id.asc()).first())
+        def _plat(a):
+            return (a.source or "").split(":")[-1] if a and ":" in (a.source or "") else "linkedin"
+        if mode == "session" and srow and applied_today < cap and _plat(srow) == "linkedin":
+            nxt = {"id": srow.id, "url": srow.url, "task": "session",
+                   "platform": "linkedin", "remaining": cap - applied_today}
+        elif srow:
+            nxt = {"id": srow.id, "url": srow.url, "task": "harvest", "platform": _plat(srow)}
+        elif arow and applied_today < cap:
+            nxt = {"id": arow.id, "url": arow.url, "task": "apply", "platform": _plat(arow)}
+    worker_age = (_time.time() - _worker_state["last_seen"]) if _worker_state["last_seen"] else None
     return {
-        "enabled": bool(row.auto_apply_enabled),
+        "enabled": enabled,
         "daily_cap": cap,
         "applied_today": applied_today,
         "queued": queued,
+        "searches": searches,
         "cap_reached": applied_today >= cap,
-        "next": ({"id": nxt.id, "url": nxt.url} if nxt and bool(row.auto_apply_enabled)
-                 and applied_today < cap else None),
+        "mode": mode,
+        "portal_auto_submit": bool(row.portal_auto_submit),
+        "next": nxt,
+        "worker_online": worker_age is not None and worker_age < 150,
+        "worker_age_sec": int(worker_age) if worker_age is not None else None,
+        "worker_action": _worker_state["last_action"],
     }
+
+
+@router.post("/auto-apply/heartbeat")
+def auto_apply_heartbeat(body: dict = None):
+    """The extension pings this each tick so the dashboard knows it's alive."""
+    _worker_state["last_seen"] = _time.time()
+    if body and body.get("action"):
+        _worker_state["last_action"] = body["action"]
+    return {"ok": True}
 
 
 @router.post("/auto-apply/toggle")
@@ -278,6 +353,10 @@ def auto_apply_toggle(body: ToggleIn, db: Session = Depends(get_db)):
     row.auto_apply_enabled = 1 if body.enabled else 0
     if body.daily_cap:
         row.auto_apply_daily_cap = max(1, min(body.daily_cap, 100))
+    if body.mode in ("session", "tabs"):
+        row.auto_apply_mode = body.mode
+    if body.portal_auto_submit is not None:
+        row.portal_auto_submit = 1 if body.portal_auto_submit else 0
     db.commit()
     return {"ok": True, "enabled": bool(row.auto_apply_enabled)}
 
@@ -306,12 +385,92 @@ def auto_apply_result(app_id: int, body: AutoResultIn, db: Session = Depends(get
     return {"ok": True, "status": a.status}
 
 
+class ExpandIn(_BM):
+    urls: list[str]
+
+
+@router.post("/{app_id}/expanded")
+def auto_apply_expanded(app_id: int, body: ExpandIn, db: Session = Depends(get_db)):
+    """A harvest task finished: queue each found job, mark the search row done."""
+    a = db.query(Application).filter(Application.id == app_id).first()
+    if not a:
+        raise HTTPException(404, "Search task not found")
+    res = queue_jobs(QueueIn(urls=body.urls), db)
+    a.status = "expanded"
+    a.job_title = (a.job_title or "Search") + f" → {res['queued']} jobs"
+    ev = ApplicationEvent(application_id=a.id, kind="search_expanded",
+                          title=f"Found {res['queued']} Easy-Apply jobs", source="auto-apply")
+    db.add(ev); db.commit()
+    return {"ok": True, **res}
+
+
+@router.post("/auto-apply/clear-queue")
+def auto_apply_clear_queue(db: Session = Depends(get_db)):
+    """Remove everything not yet applied (queued jobs + pending searches)."""
+    n = (db.query(Application)
+         .filter(Application.status.in_(("queued", "queued_search")))
+         .delete(synchronize_session=False))
+    db.commit()
+    return {"ok": True, "removed": n}
+
+
+class SessionResult(_BM):
+    url: str | None = None
+    job_title: str | None = None
+    company: str | None = None
+    status: str = "failed"
+    filled: int = 0
+    cv_used: str | None = None
+    answers: list | None = None
+    reason: str | None = None
+
+
+class SessionBatchIn(_BM):
+    search_id: int | None = None
+    results: list[SessionResult]
+    blocked: bool = False
+
+
+@router.post("/auto-apply/session-batch")
+def auto_apply_session_batch(body: SessionBatchIn, db: Session = Depends(get_db)):
+    """Record every application made during one same-tab session run."""
+    counts = {"applied": 0, "needs_review": 0, "failed": 0}
+    for res in body.results:
+        a = Application(
+            url=res.url, source="auto-apply",
+            job_title=res.job_title, company=res.company,
+            status={"applied": "applied", "needs_review": "needs_review"}.get(res.status, "failed"),
+        )
+        db.add(a); db.commit(); db.refresh(a)
+        ev = ApplicationEvent(
+            application_id=a.id,
+            kind="auto_applied" if res.status == "applied" else "auto_apply_" + res.status,
+            title=(f"Auto-applied · {res.filled} fields · CV: {res.cv_used or '—'}"
+                   if res.status == "applied" else f"Auto-apply {res.status}: {res.reason or ''}"[:290]),
+            detail=_json.dumps({"answers": res.answers or [], "cv_used": res.cv_used,
+                                "filled": res.filled, "reason": res.reason}, ensure_ascii=False),
+            source="auto-apply")
+        db.add(ev); db.commit()
+        counts[res.status if res.status in counts else "failed"] += 1
+    # Mark the search row done
+    if body.search_id:
+        srow = db.query(Application).filter(Application.id == body.search_id).first()
+        if srow:
+            srow.status = "expanded"
+            srow.job_title = (srow.job_title or "Search") + f" → {counts['applied']} applied"
+            db.commit()
+    if body.blocked:
+        r = db.query(AppSettings).first()
+        if r: r.auto_apply_enabled = 0; db.commit()
+    return {"ok": True, **counts, "blocked": body.blocked}
+
+
 @router.get("/auto-apply/log")
 def auto_apply_log(limit: int = 50, db: Session = Depends(get_db)):
     """Everything auto-apply has touched, newest first, with per-job fill details."""
     rows = (db.query(Application)
             .filter((Application.source == "auto-apply") |
-                    Application.status.in_(("queued", "needs_review", "failed")))
+                    Application.status.in_(("queued", "queued_search", "expanded", "needs_review", "failed")))
             .order_by(Application.id.desc()).limit(limit).all())
     out = []
     for a in rows:
@@ -323,9 +482,10 @@ def auto_apply_log(limit: int = 50, db: Session = Depends(get_db)):
         if ev and ev.detail:
             try: detail = _json.loads(ev.detail)
             except Exception: detail = {}
+        is_search = a.status in ("queued_search", "expanded")
         out.append({
             "id": a.id, "job_title": a.job_title, "company": a.company,
-            "url": a.url, "status": a.status,
+            "url": a.url, "status": a.status, "is_search": is_search,
             "updated_at": a.updated_at.isoformat() if a.updated_at else None,
             "filled": detail.get("filled", 0),
             "cv_used": detail.get("cv_used"),

@@ -30,14 +30,17 @@ class ProfileIn(BaseModel):
     nobility_title: str | None = None
     gender: str | None = None
     eu_work_auth: str | None = None
+    portal_password: str | None = None
     extra: dict | None = None
 
 @router.get("/")
-def get_profile(db: Session = Depends(get_db)):
+def get_profile(reveal: bool = False, db: Session = Depends(get_db)):
+    # reveal=true returns the raw portal password (used by the autofill content
+    # script). The dashboard calls without reveal so the field stays masked.
     p = db.query(Profile).first()
     if not p:
         return {}
-    return _serialize(p)
+    return _serialize(p, reveal=reveal)
 
 @router.put("/")
 def upsert(body: ProfileIn, db: Session = Depends(get_db)):
@@ -46,6 +49,9 @@ def upsert(body: ProfileIn, db: Session = Depends(get_db)):
         p = Profile()
         db.add(p)
     data = body.model_dump(exclude_unset=True)
+    # Empty password field from the UI means "leave unchanged" (it's masked)
+    if data.get("portal_password") == "":
+        data.pop("portal_password", None)
     if "languages" in data and data["languages"] is not None:
         p.languages = json.dumps(data.pop("languages"), ensure_ascii=False)
     if "extra" in data and data["extra"] is not None:
@@ -56,8 +62,11 @@ def upsert(body: ProfileIn, db: Session = Depends(get_db)):
     db.refresh(p)
     return _serialize(p)
 
-def _serialize(p: Profile) -> dict:
+def _serialize(p: Profile, reveal: bool = False) -> dict:
+    pw = p.portal_password or ""
     return {
+        "portal_password": pw if reveal else "",
+        "portal_password_set": bool(pw),
         "full_name": p.full_name, "first_name": p.first_name, "last_name": p.last_name,
         "email": p.email, "phone": p.phone, "city": p.city, "country": p.country,
         "linkedin_url": p.linkedin_url, "github_url": p.github_url, "portfolio_url": p.portfolio_url,

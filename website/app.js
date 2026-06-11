@@ -1494,10 +1494,25 @@ async function refreshAutoApply(){
   btn.textContent = st.enabled ? "Stop" : "Start";
   btn.className = st.enabled ? "btn secondary" : "btn";
   $("#aa-cap").value = st.daily_cap;
+  if (st.mode) $("#aa-mode").value = st.mode;
+  $("#aa-pills").innerHTML = st.enabled
+    ? `<span class="aa-badge aa-applied">running</span>`
+    : `<span class="aa-badge aa-queued">stopped</span>`;
   $("#aa-stats").innerHTML = `
-    <div class="aa-stat"><b>${st.queued}</b> queued</div>
-    <div class="aa-stat"><b>${st.applied_today}</b> applied today ${st.cap_reached ? "· <span style='color:#b91c1c'>cap reached</span>" : ""}</div>
-    <div class="aa-stat">${st.enabled ? "<span style='color:#15803d'>● running — keep Chrome open</span>" : "<span style='color:#94a3b8'>○ stopped</span>"}</div>`;
+    <div class="aa-stat"><b>${st.queued}</b>queued jobs</div>
+    <div class="aa-stat"><b>${st.searches || 0}</b>searches to expand</div>
+    <div class="aa-stat"><b>${st.applied_today}</b>applied today${st.cap_reached ? " <span style='color:#b91c1c;font-size:11px;'>(cap reached)</span>" : ""}</div>`;
+  const w = $("#aa-worker");
+  if (st.worker_online) {
+    w.className = "aa-worker on";
+    w.innerHTML = `<span class="dot"></span> Extension connected${
+      st.worker_action && st.worker_action !== "idle"
+        ? " — " + esc(st.worker_action) : st.enabled ? " — waiting for next slot (runs every minute)" : ""}`;
+  } else {
+    w.className = "aa-worker off";
+    w.innerHTML = `<span class="dot"></span> Extension not responding — open chrome://extensions and click <b>Reload</b> on Job Apply Assistant, and keep Chrome open. ${
+      st.worker_age_sec === null ? "(never seen since backend start)" : `(last seen ${st.worker_age_sec}s ago)`}`;
+  }
   loadAutoApplyLog();
 }
 
@@ -1506,21 +1521,33 @@ async function loadAutoApplyLog(){
   try { rows = await API.get("/applications/auto-apply/log?limit=50"); } catch { return; }
   const box = $("#aa-log");
   if (!rows.length) { box.innerHTML = '<div class="muted">Nothing yet — queue some jobs above.</div>'; return; }
+  const statusText = { queued_search: "search", expanded: "expanded", needs_review: "needs review" };
+  function shortTitle(r){
+    if (r.job_title) return r.job_title;
+    if (r.is_search) {
+      try { const u = new URL(r.url); return "Search: " + (u.searchParams.get("keywords") || "LinkedIn jobs"); }
+      catch { return "LinkedIn search"; }
+    }
+    return r.url ? r.url.replace(/^https?:\/\/(www\.)?linkedin\.com/, "").slice(0, 50) : "?";
+  }
   box.innerHTML = rows.map(r => `
     <div class="aa-row" data-id="${r.id}">
       <div class="aa-row-top">
-        <span class="aa-title">${esc(r.job_title || r.url || "?")}${r.company ? " · " + esc(r.company) : ""}</span>
-        <span class="aa-badge aa-${esc(r.status)}">${esc(r.status.replace("_", " "))}</span>
+        <span class="aa-title">${esc(shortTitle(r))}${r.company ? " · " + esc(r.company) : ""}</span>
+        <span class="aa-badge aa-${esc(r.status)}">${esc(statusText[r.status] || r.status)}</span>
       </div>
       <div class="aa-meta">
-        ${r.filled ? r.filled + " fields filled" : ""}${r.cv_used ? " · CV: " + esc(r.cv_used) : ""}
-        ${r.reason ? " · " + esc(r.reason) : ""}${r.updated_at ? " · " + new Date(r.updated_at).toLocaleString() : ""}
+        ${r.is_search
+          ? "search task" + (r.status === "expanded" ? " · done" : " · waiting to expand")
+          : (r.filled ? r.filled + " fields filled" : "not filled yet") + (r.cv_used ? " · CV: " + esc(r.cv_used) : "")}
+        ${r.reason ? " · " + esc(r.reason) : ""}${r.updated_at ? " · " + new Date(r.updated_at).toLocaleDateString() : ""}
       </div>
       <div class="aa-detail">
-        ${r.url ? `<div style="margin-bottom:6px;"><a href="${esc(r.url)}" target="_blank">Open job on LinkedIn →</a></div>` : ""}
-        ${(r.answers || []).length ? `<table>${r.answers.map(a =>
-          `<tr><td>${esc(a.label)}</td><td>${esc(String(a.value))}</td></tr>`).join("")}</table>`
-          : '<span class="muted">No screening answers were needed.</span>'}
+        ${r.url ? `<div style="margin-bottom:6px;"><a href="${esc(r.url)}" target="_blank">Open on LinkedIn →</a></div>` : ""}
+        ${r.is_search ? '<span class="muted">This search auto-queues every Easy-Apply job it finds.</span>'
+          : (r.answers || []).length ? `<table>${r.answers.map(a =>
+              `<tr><td>${esc(a.label)}</td><td>${esc(String(a.value))}</td></tr>`).join("")}</table>`
+            : '<span class="muted">No screening answers were needed.</span>'}
       </div>
     </div>`).join("");
   $all(".aa-row").forEach(row => row.addEventListener("click", e => {
@@ -1533,6 +1560,7 @@ $("#aa-toggle")?.addEventListener("click", async () => {
   try {
     await API.post("/applications/auto-apply/toggle", {
       enabled: !aaEnabled, daily_cap: +$("#aa-cap").value || 15,
+      mode: $("#aa-mode").value,
     });
   } catch {}
   refreshAutoApply();
@@ -1544,13 +1572,32 @@ $("#aa-queue")?.addEventListener("click", async () => {
   const st = $("#aa-queue-status");
   try {
     const r = await API.post("/applications/queue", { urls });
-    st.textContent = `${r.queued} queued${r.skipped ? `, ${r.skipped} skipped (not LinkedIn job URLs or already queued/applied)` : ""}.`;
+    st.textContent = `${r.queued} added${r.skipped ? `, ${r.skipped} skipped` : ""}. Searches expand into individual jobs once automation runs.`;
     $("#aa-urls").value = "";
     refreshAutoApply();
   } catch (e) { st.textContent = "Failed: " + e.message; }
 });
 
-function startAaPoll(){ stopAaPoll(); aaPollTimer = setInterval(refreshAutoApply, 10000); }
+$("#aa-mode")?.addEventListener("change", async () => {
+  try { await API.post("/applications/auto-apply/toggle", { enabled: aaEnabled, mode: $("#aa-mode").value }); } catch {}
+});
+
+$("#aa-clear-queue")?.addEventListener("click", async () => {
+  if (!confirm("Remove all queued jobs and pending searches?")) return;
+  try {
+    const r = await API.post("/applications/auto-apply/clear-queue", {});
+    $("#aa-queue-status").textContent = `${r.removed} removed from queue.`;
+  } catch (e) { $("#aa-queue-status").textContent = "Failed: " + e.message; }
+  refreshAutoApply();
+});
+
+$all(".aa-chip").forEach(c => c.addEventListener("click", () => {
+  const ta = $("#aa-urls");
+  ta.value = (ta.value.trim() ? ta.value.trim() + "\n" : "") + c.dataset.fill;
+  ta.focus();
+}));
+
+function startAaPoll(){ stopAaPoll(); aaPollTimer = setInterval(refreshAutoApply, 5000); }
 function stopAaPoll(){ if (aaPollTimer) { clearInterval(aaPollTimer); aaPollTimer = null; } }
 
 $all(".sidebar a").forEach(a => a.addEventListener("click", () => {

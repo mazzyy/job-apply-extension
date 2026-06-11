@@ -37,5 +37,7 @@ class AppSettings(Base):
     # Auto-apply (LinkedIn Easy Apply automation)
     auto_apply_enabled = Column(Integer, default=0)     # 0/1
     auto_apply_daily_cap = Column(Integer, default=15)
+    auto_apply_mode = Column(String(20), default="session")   # session | tabs
+    portal_auto_submit = Column(Integer, default=0)           # 0 = fill & stop for review, 1 = auto-submit
 
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

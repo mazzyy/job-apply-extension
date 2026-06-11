@@ -12,6 +12,10 @@
     "alarms"
   ],
   "host_permissions": [
+    "https://*.sapsf.eu/*",
+    "https://*.sapsf.com/*",
+    "https://*.successfactors.com/*",
+    "https://*.successfactors.eu/*",
     "https://www.linkedin.com/*",
     "https://*.greenhouse.io/*",
     "https://boards.greenhouse.io/*",
@@ -123,6 +127,25 @@
     },
     {
       "matches": [
+        "https://*.successfactors.eu/*",
+        "https://*.successfactors.com/*",
+        "https://*.sapsf.com/*",
+        "https://*.sapsf.eu/*"
+      ],
+      "js": [
+        "content/autofill.js",
+        "content/apply_watcher.js",
+        "content/successfactors.js",
+        "content/question_suggest.js"
+      ],
+      "css": [
+        "content/overlay.css"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    },
+    {
+      "matches": [
         "<all_urls>"
       ],
       "js": [
@@ -144,7 +167,11 @@
         "https://*.ashbyhq.com/*",
         "https://chrome.google.com/*",
         "https://localhost/*",
-        "http://localhost/*"
+        "http://localhost/*",
+        "https://*.successfactors.eu/*",
+        "https://*.successfactors.com/*",
+        "https://*.sapsf.com/*",
+        "https://*.sapsf.eu/*"
       ]
     }
   ],

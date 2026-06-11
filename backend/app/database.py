@@ -52,6 +52,9 @@ def ensure_schema():
         ("chat_messages", "thread_id", "INTEGER"),
         ("app_settings", "auto_apply_enabled", "INTEGER DEFAULT 0"),
         ("app_settings", "auto_apply_daily_cap", "INTEGER DEFAULT 15"),
+        ("app_settings", "auto_apply_mode", "VARCHAR(20) DEFAULT 'session'"),
+        ("app_settings", "portal_auto_submit", "INTEGER DEFAULT 0"),
+        ("profiles", "portal_password", "VARCHAR(200)"),
     ]
     with engine.begin() as conn:
         for table, col, ddl in add_cols:

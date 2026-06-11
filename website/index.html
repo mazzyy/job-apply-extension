@@ -152,40 +152,61 @@
   <section id="tab-autoapply" class="tab">
     <h1>Auto-apply · LinkedIn Easy Apply</h1>
 
-    <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-        <div>
-          <h3 style="margin:0;">Automation</h3>
-          <p class="muted" style="margin:4px 0 0;font-size:12px;">
-            The extension applies to queued jobs one at a time with human-like pauses, picks your
-            LinkedIn resume, and <b>skips</b> any application whose answers need review.
-          </p>
+    <div class="card aa-control">
+      <div class="aa-control-main">
+        <div class="aa-toggle-row">
+          <div class="aa-headline">
+            <h3 style="margin:0;">Automation</h3>
+            <div class="aa-pills" id="aa-pills"></div>
+          </div>
+          <div class="aa-toggle-controls">
+            <label class="aa-cap-label">Mode
+              <select class="input" id="aa-mode" style="width:auto;">
+                <option value="session">One tab (human-like)</option>
+                <option value="tabs">New tab per job</option>
+              </select>
+            </label>
+            <label class="aa-cap-label">Daily cap
+              <input class="input" id="aa-cap" type="number" min="1" max="100" value="15" />
+            </label>
+            <button class="btn aa-big-btn" id="aa-toggle">Start</button>
+          </div>
         </div>
-        <div style="display:flex;align-items:center;gap:10px;">
-          <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;">
-            Daily cap <input class="input" id="aa-cap" type="number" min="1" max="100" value="15" style="width:64px;" />
-          </label>
-          <button class="btn" id="aa-toggle">Start</button>
+        <div class="aa-stats" id="aa-stats"></div>
+        <div class="aa-worker" id="aa-worker"></div>
+      </div>
+      <div class="aa-warn">⚠ Unattended applying breaks LinkedIn's terms — keep the cap modest and review the log daily. It skips anything needing human answers.</div>
+    </div>
+
+    <div class="card">
+      <div class="aa-add-head">
+        <h3 style="margin:0;">Add jobs</h3>
+        <div class="aa-chips">
+          <span class="aa-chip" data-fill="cloud engineer">keyword: cloud engineer</span>
+          <span class="aa-chip" data-fill="devops engineer">keyword: devops engineer</span>
+          <span class="aa-chip" data-fill="https://www.linkedin.com/jobs/search/?keywords=platform%20engineer&f_AL=true">search URL example</span>
         </div>
       </div>
-      <div class="aa-stats" id="aa-stats"></div>
-      <p class="muted" style="font-size:11.5px;margin:10px 0 0;">
-        ⚠ Unattended applying is against LinkedIn's terms of service — aggressive use can get your
-        account rate-limited or restricted. Keep the cap modest and review the log daily.
+      <p class="muted" style="font-size:12.5px;margin:8px 0 10px;">
+        One per line — a job title/keyword (<i>searches LinkedIn for Easy-Apply jobs</i>), a
+        <code>/jobs/search/…</code> URL (<i>queues everything on it</i>), or a single
+        <code>/jobs/view/…</code> link.
       </p>
+      <textarea id="aa-urls" class="aa-input" rows="6"
+        placeholder="cloud engineer&#10;https://www.linkedin.com/jobs/search/?keywords=devops&f_AL=true&#10;https://www.linkedin.com/jobs/view/1234567890"></textarea>
+      <div class="aa-queue-actions">
+        <button class="btn aa-big-btn" id="aa-queue">Add to queue</button>
+        <button class="btn secondary" id="aa-clear-queue" title="Remove all queued jobs and pending searches">Clear queue</button>
+        <span id="aa-queue-status" class="muted" style="font-size:12.5px;"></span>
+      </div>
     </div>
 
     <div class="card">
-      <h3 style="margin-top:0;">Queue jobs</h3>
-      <p class="muted" style="font-size:12.5px;">Paste LinkedIn job URLs (one per line). Only Easy Apply jobs will succeed; external-apply jobs are recorded as failed.</p>
-      <textarea id="aa-urls" rows="4" placeholder="https://www.linkedin.com/jobs/view/1234567890&#10;https://www.linkedin.com/jobs/view/0987654321"></textarea>
-      <button class="btn" id="aa-queue" style="margin-top:8px;">Add to queue</button>
-      <span id="aa-queue-status" class="muted" style="font-size:12px;margin-left:10px;"></span>
-    </div>
-
-    <div class="card">
-      <h3 style="margin-top:0;">Application log</h3>
-      <div id="aa-log"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <h3 style="margin:0;">Application log</h3>
+        <span class="muted" style="font-size:12px;">click a row for the answers it submitted</span>
+      </div>
+      <div id="aa-log" style="margin-top:10px;"></div>
     </div>
   </section>
 

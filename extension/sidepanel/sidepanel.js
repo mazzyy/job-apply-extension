@@ -303,6 +303,20 @@ $("#save-settings").addEventListener("click", async () => {
 refreshHeader();
 setInterval(refreshHeader, 30000);
 
+// Auto-apply liveness: while the side panel is open, ping the backend so the
+// dashboard's "Extension connected" indicator goes green. The background worker
+// also pings, but the panel is a reliable always-on context.
+async function panelHeartbeat(){
+  try {
+    await chrome.runtime.sendMessage({
+      type: "API_POST", path: "/applications/auto-apply/heartbeat",
+      body: { action: "panel-open" },
+    });
+  } catch {}
+}
+panelHeartbeat();
+setInterval(panelHeartbeat, 20000);
+
 /* ============================== Easy Apply guided ============================== */
 // Live progress from the content script while Easy Apply runs
 chrome.runtime.onMessage.addListener((msg) => {

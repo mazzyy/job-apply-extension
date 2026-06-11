@@ -28,6 +28,7 @@ class Profile(Base):
     nobility_title = Column(String(80))                # e.g. Dr., Prof. Dr.
     gender = Column(String(40))                        # Male / Female / Non-binary / Prefer not to say
     eu_work_auth = Column(String(20))                  # Yes / No — EU work authorization specific
+    portal_password = Column(String(200))              # reusable password for career-portal account creation
     extra_json = Column(Text)                          # catch-all for custom field answers
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
