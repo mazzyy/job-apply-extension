@@ -70,11 +70,9 @@ html, body {
   backdrop-filter: saturate(180%) blur(8px);
 }
 .brand-logo {
-  width: 28px; height: 28px; border-radius: 8px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  display: grid; place-items: center; color: #fff;
-  font-weight: 800; font-size: 14px; letter-spacing: -0.02em;
-  box-shadow: 0 4px 10px rgba(99, 102, 241, 0.35);
+  width: 30px; height: 30px; border-radius: 9px;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
 }
 .brand-text {
   font-weight: 700; font-size: 14px; letter-spacing: -0.01em;

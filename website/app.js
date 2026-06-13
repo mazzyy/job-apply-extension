@@ -212,9 +212,12 @@ async function loadCvs(){
 async function loadProfile(){
   const p = await API.get("/profile/").catch(()=>({}));
   for (const [k, v] of Object.entries(p)) {
+    if (k === "portal_password") continue;   // masked — never populate the field
     const el = document.querySelector(`#profile-form [name="${k}"]`);
     if (el && typeof v !== "object") el.value = v ?? "";
   }
+  const hint = document.getElementById("portal-pw-hint");
+  if (hint) hint.textContent = p.portal_password_set ? "✓ saved — leave blank to keep" : "not set";
 }
 $("#profile-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -222,6 +225,7 @@ $("#profile-form").addEventListener("submit", async (e) => {
   const body = {};
   fd.forEach((v, k) => body[k] = v || null);
   if (body.years_experience) body.years_experience = +body.years_experience;
+  if (!body.portal_password) delete body.portal_password;   // blank = keep existing
   $("#profile-status").textContent = "Saving…";
   await API.put("/profile/", body);
   $("#profile-status").textContent = "Saved.";
@@ -1495,6 +1499,7 @@ async function refreshAutoApply(){
   btn.className = st.enabled ? "btn secondary" : "btn";
   $("#aa-cap").value = st.daily_cap;
   if (st.mode) $("#aa-mode").value = st.mode;
+  if (typeof st.portal_auto_submit !== "undefined") $("#aa-portal-submit").value = st.portal_auto_submit ? "1" : "0";
   $("#aa-pills").innerHTML = st.enabled
     ? `<span class="aa-badge aa-applied">running</span>`
     : `<span class="aa-badge aa-queued">stopped</span>`;
@@ -1561,6 +1566,7 @@ $("#aa-toggle")?.addEventListener("click", async () => {
     await API.post("/applications/auto-apply/toggle", {
       enabled: !aaEnabled, daily_cap: +$("#aa-cap").value || 15,
       mode: $("#aa-mode").value,
+      portal_auto_submit: $("#aa-portal-submit").value === "1",
     });
   } catch {}
   refreshAutoApply();
@@ -1580,6 +1586,9 @@ $("#aa-queue")?.addEventListener("click", async () => {
 
 $("#aa-mode")?.addEventListener("change", async () => {
   try { await API.post("/applications/auto-apply/toggle", { enabled: aaEnabled, mode: $("#aa-mode").value }); } catch {}
+});
+$("#aa-portal-submit")?.addEventListener("change", async () => {
+  try { await API.post("/applications/auto-apply/toggle", { enabled: aaEnabled, portal_auto_submit: $("#aa-portal-submit").value === "1" }); } catch {}
 });
 
 $("#aa-clear-queue")?.addEventListener("click", async () => {

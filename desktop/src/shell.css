@@ -13,11 +13,8 @@ html, body {
 }
 .brand { display: flex; flex-direction: column; align-items: center; gap: 12px; }
 .brand .logo {
-  width: 64px; height: 64px; border-radius: 14px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  display: grid; place-items: center;
-  font-weight: 900; font-size: 32px; color: #fff;
-  box-shadow: 0 12px 36px rgba(99, 102, 241, 0.45);
+  width: 66px; height: 66px; border-radius: 18px;
+  box-shadow: 0 14px 40px rgba(99, 102, 241, 0.5);
 }
 .brand h1 { font-size: 20px; margin: 0; letter-spacing: -0.02em; font-weight: 700; }
 .status {
