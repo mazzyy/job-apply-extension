@@ -76,6 +76,15 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def extension_liveness(request: Request, call_next):
+    # The extension tags all its API calls; any of them proves it's connected.
+    if request.headers.get("x-jaa-client") == "extension":
+        from .services.worker_state import mark
+        mark("active")
+    return await call_next(request)
+
+
 @app.exception_handler(Exception)
 async def all_exception_handler(request: Request, exc: Exception):
     log.error("Unhandled error on %s %s:\n%s",

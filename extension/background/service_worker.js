@@ -19,7 +19,7 @@ async function apiFetch(path, opts = {}) {
   const base = await getApiBase();
   const res = await fetch(`${base}${path}`, {
     ...opts,
-    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+    headers: { "Content-Type": "application/json", "X-JAA-Client": "extension", ...(opts.headers || {}) },
   });
   const text = await res.text();
   let data;

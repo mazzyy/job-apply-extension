@@ -200,7 +200,7 @@ def add_event(app_id: int, body: dict, db: Session = Depends(get_db)):
 
 # ============================== Auto-apply ==============================
 import time as _time
-_worker_state = {"last_seen": 0.0, "last_action": None}
+from ..services import worker_state as _ws
 import json as _json
 import re as _re
 from datetime import datetime as _dt, timedelta as _td
@@ -330,7 +330,7 @@ def auto_apply_status(db: Session = Depends(get_db)):
     li_queued = sum(1 for a in db.query(Application).filter(Application.status.in_(("queued","queued_search"))).all()
                     if _platform_of(a) == "linkedin")
     sf_queued = queued + searches - li_queued
-    worker_age = (_time.time() - _worker_state["last_seen"]) if _worker_state["last_seen"] else None
+    _wstat = _ws.status()
     return {
         "enabled": enabled,
         "daily_cap": cap,
@@ -343,18 +343,16 @@ def auto_apply_status(db: Session = Depends(get_db)):
         "mode": mode,
         "portal_auto_submit": bool(row.portal_auto_submit),
         "next": nxt,
-        "worker_online": worker_age is not None and worker_age < 150,
-        "worker_age_sec": int(worker_age) if worker_age is not None else None,
-        "worker_action": _worker_state["last_action"],
+        "worker_online": _wstat["online"],
+        "worker_age_sec": _wstat["age_sec"],
+        "worker_action": _wstat["action"],
     }
 
 
 @router.post("/auto-apply/heartbeat")
 def auto_apply_heartbeat(body: dict = None):
-    """The extension pings this each tick so the dashboard knows it's alive."""
-    _worker_state["last_seen"] = _time.time()
-    if body and body.get("action"):
-        _worker_state["last_action"] = body["action"]
+    """Explicit ping (the header middleware also marks liveness on every call)."""
+    _ws.mark((body or {}).get("action") or "heartbeat")
     return {"ok": True}
 
 
