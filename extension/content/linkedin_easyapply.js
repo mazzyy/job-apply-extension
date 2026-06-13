@@ -699,8 +699,10 @@
           note: `${status} · ${job.job_title || id}` });
       } catch {}
 
-      // Captcha / checkpoint? Stop the whole run.
-      if (/checkpoint\/challenge|captcha|security verification/i.test(document.body.innerText + " " + location.href)) {
+      // Captcha / checkpoint? Stop the whole run immediately.
+      if (r.error === "captcha" ||
+          /\/checkpoint\/|\/challenge|captcha|security verification|security check|unusual activity/i
+            .test(document.body.innerText + " " + location.href)) {
         return { results, blocked: true };
       }
 
@@ -766,8 +768,10 @@
       if (!modal) {
         // Distinguish captcha / checkpoint from external-apply
         const bodyTxt = document.body.innerText.toLowerCase();
-        if (/security check|captcha|verify you'?re a human|let'?s do a quick security check/i.test(bodyTxt)) {
-          return { error: "LinkedIn is showing a security check (captcha). Solve it once in the browser, then retry." };
+        const isCheckpoint = /\/checkpoint\/|\/challenge/i.test(location.href) ||
+          /security check|captcha|verify you'?re a human|quick security check|unusual activity|are you a human|let'?s confirm/i.test(bodyTxt);
+        if (isCheckpoint) {
+          return { error: "captcha", message: "LinkedIn is showing a security check. Automation paused — solve it in the browser and let your account rest before resuming." };
         }
         const externalApply = Array.from(document.querySelectorAll("button, a"))
           .find(b => visible(b) && /^\s*apply\b/i.test((b.innerText||"").trim()) && !/easy apply/i.test(b.innerText));

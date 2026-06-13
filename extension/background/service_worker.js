@@ -247,6 +247,12 @@ async function runOneAutoApply(next) {
         args: [next.id, isSF, portalAutoSubmit],
       });
       r = result || { error: "no result" };
+      // captcha → stop retrying and pause automation
+      if (r.error === "captcha" || /captcha|security check|checkpoint/i.test(r.message || r.error || "")) {
+        r.error = r.message || "LinkedIn security check — automation paused.";
+        try { await apiFetch("/applications/auto-apply/toggle", { method: "POST", body: JSON.stringify({ enabled: false }) }); } catch {}
+        break;
+      }
       if (!/modal didn'?t open/i.test(r.error || "")) break;
       // Detect a captcha / checkpoint page and bail out clearly
       const [{ result: blocked } = {}] = await chrome.scripting.executeScript({
@@ -263,6 +269,10 @@ async function runOneAutoApply(next) {
     };
     if (r.stopped === "submitted") {
       await report({ ...meta, status: "applied" });
+    } else if (r.stopped === "submit_unconfirmed") {
+      // Clicked Submit but couldn't confirm the success page — record as applied
+      // with a note so the user can spot-check rather than silently losing it.
+      await report({ ...meta, status: "applied", reason: "submitted (confirmation not detected — verify)" });
     } else if (["needs_review", "required_field_blank", "validation_error", "ready_to_submit", "needs_account"].includes(r.stopped)) {
       await report({ ...meta, status: "needs_review",
         reason: r.reason || (r.stopped === "ready_to_submit"

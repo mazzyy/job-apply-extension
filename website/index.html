@@ -221,10 +221,15 @@
     </div>
 
     <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
         <h3 style="margin:0;">Application log</h3>
-        <span class="muted" style="font-size:12px;">click a row for the answers it submitted</span>
+        <div class="aa-plat-tabs" id="aa-plat-tabs">
+          <button class="aa-plat-tab active" data-plat="">All</button>
+          <button class="aa-plat-tab" data-plat="linkedin">LinkedIn Easy Apply</button>
+          <button class="aa-plat-tab" data-plat="successfactors">Company portals</button>
+        </div>
       </div>
+      <span class="muted" style="font-size:12px;">click a row for the answers it submitted</span>
       <div id="aa-log" style="margin-top:10px;"></div>
     </div>
   </section>

@@ -1489,6 +1489,7 @@ $all(".sidebar a").forEach(a => a.addEventListener("click", () => {
 /* ============================== Auto-apply ============================== */
 let aaEnabled = false;
 let aaPollTimer = null;
+let aaPlatform = "";   // "" = all, "linkedin", "successfactors"
 
 async function refreshAutoApply(){
   let st;
@@ -1523,7 +1524,7 @@ async function refreshAutoApply(){
 
 async function loadAutoApplyLog(){
   let rows;
-  try { rows = await API.get("/applications/auto-apply/log?limit=50"); } catch { return; }
+  try { rows = await API.get("/applications/auto-apply/log?limit=80" + (aaPlatform ? "&platform=" + aaPlatform : "")); } catch { return; }
   const box = $("#aa-log");
   if (!rows.length) { box.innerHTML = '<div class="muted">Nothing yet — queue some jobs above.</div>'; return; }
   const statusText = { queued_search: "search", expanded: "expanded", needs_review: "needs review" };
@@ -1535,10 +1536,12 @@ async function loadAutoApplyLog(){
     }
     return r.url ? r.url.replace(/^https?:\/\/(www\.)?linkedin\.com/, "").slice(0, 50) : "?";
   }
+  const platLabel = { linkedin: "LinkedIn", successfactors: "Portal" };
   box.innerHTML = rows.map(r => `
     <div class="aa-row" data-id="${r.id}">
       <div class="aa-row-top">
         <span class="aa-title">${esc(shortTitle(r))}${r.company ? " · " + esc(r.company) : ""}</span>
+        ${r.platform ? `<span class="aa-plat">${esc(platLabel[r.platform] || r.platform)}</span>` : ""}
         <span class="aa-badge aa-${esc(r.status)}">${esc(statusText[r.status] || r.status)}</span>
       </div>
       <div class="aa-meta">
@@ -1604,6 +1607,13 @@ $all(".aa-chip").forEach(c => c.addEventListener("click", () => {
   const ta = $("#aa-urls");
   ta.value = (ta.value.trim() ? ta.value.trim() + "\n" : "") + c.dataset.fill;
   ta.focus();
+}));
+
+$all(".aa-plat-tab").forEach(t => t.addEventListener("click", () => {
+  $all(".aa-plat-tab").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  aaPlatform = t.dataset.plat;
+  loadAutoApplyLog();
 }));
 
 function startAaPoll(){ stopAaPoll(); aaPollTimer = setInterval(refreshAutoApply, 5000); }

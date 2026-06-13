@@ -319,6 +319,9 @@ def auto_apply_status(db: Session = Depends(get_db)):
             nxt = {"id": srow.id, "url": srow.url, "task": "harvest", "platform": _plat(srow)}
         elif arow and applied_today < cap:
             nxt = {"id": arow.id, "url": arow.url, "task": "apply", "platform": _plat(arow)}
+    li_queued = sum(1 for a in db.query(Application).filter(Application.status.in_(("queued","queued_search"))).all()
+                    if _platform_of(a) == "linkedin")
+    sf_queued = queued + searches - li_queued
     worker_age = (_time.time() - _worker_state["last_seen"]) if _worker_state["last_seen"] else None
     return {
         "enabled": enabled,
@@ -326,6 +329,8 @@ def auto_apply_status(db: Session = Depends(get_db)):
         "applied_today": applied_today,
         "queued": queued,
         "searches": searches,
+        "queued_linkedin": li_queued,
+        "queued_portal": sf_queued,
         "cap_reached": applied_today >= cap,
         "mode": mode,
         "portal_auto_submit": bool(row.portal_auto_submit),
@@ -437,7 +442,7 @@ def auto_apply_session_batch(body: SessionBatchIn, db: Session = Depends(get_db)
     counts = {"applied": 0, "needs_review": 0, "failed": 0}
     for res in body.results:
         a = Application(
-            url=res.url, source="auto-apply",
+            url=res.url, source="auto-apply:linkedin",
             job_title=res.job_title, company=res.company,
             status={"applied": "applied", "needs_review": "needs_review"}.get(res.status, "failed"),
         )
@@ -465,13 +470,26 @@ def auto_apply_session_batch(body: SessionBatchIn, db: Session = Depends(get_db)
     return {"ok": True, **counts, "blocked": body.blocked}
 
 
+def _platform_of(a) -> str:
+    src = a.source or ""
+    if ":" in src:
+        return src.split(":")[-1]
+    if a.url and "successfactors" in (a.url or "").lower():
+        return "successfactors"
+    return "linkedin"
+
+
 @router.get("/auto-apply/log")
-def auto_apply_log(limit: int = 50, db: Session = Depends(get_db)):
-    """Everything auto-apply has touched, newest first, with per-job fill details."""
+def auto_apply_log(limit: int = 80, platform: str = "", db: Session = Depends(get_db)):
+    """Everything auto-apply has touched, newest first, with per-job fill details.
+    platform: 'linkedin' | 'successfactors' | '' (all)."""
     rows = (db.query(Application)
-            .filter((Application.source == "auto-apply") |
+            .filter(Application.source.like("auto-apply%") |
                     Application.status.in_(("queued", "queued_search", "expanded", "needs_review", "failed")))
-            .order_by(Application.id.desc()).limit(limit).all())
+            .order_by(Application.id.desc()).limit(300).all())
+    if platform:
+        rows = [a for a in rows if _platform_of(a) == platform]
+    rows = rows[:limit]
     out = []
     for a in rows:
         ev = (db.query(ApplicationEvent)
@@ -486,6 +504,7 @@ def auto_apply_log(limit: int = 50, db: Session = Depends(get_db)):
         out.append({
             "id": a.id, "job_title": a.job_title, "company": a.company,
             "url": a.url, "status": a.status, "is_search": is_search,
+            "platform": _platform_of(a),
             "updated_at": a.updated_at.isoformat() if a.updated_at else None,
             "filled": detail.get("filled", 0),
             "cv_used": detail.get("cv_used"),
