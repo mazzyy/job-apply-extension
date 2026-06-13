@@ -109,28 +109,83 @@
     if (el.tagName !== "INPUT") return false;
     return el.getAttribute("role") === "combobox" ||
            el.getAttribute("aria-autocomplete") === "list" ||
+           el.getAttribute("aria-expanded") !== null ||
+           !!el.getAttribute("aria-controls") ||
            /search-typeahead|basic-typeahead|typeahead/i.test(el.className || "") ||
-           !!el.closest("[data-test-single-typeahead-entity-form-component], .search-basic-typeahead");
+           // Field label says "location/city" — LinkedIn always makes these typeaheads
+           /\b(location|city|stadt|ort)\b/i.test(labelOf(el) || "") ||
+           !!el.closest("[data-test-single-typeahead-entity-form-component], .search-basic-typeahead, [class*='typeahead']");
+  }
+
+  function typeaheadOptions(el) {
+    // Options can live in a listbox referenced by aria-controls, or globally.
+    const controlled = el.getAttribute("aria-controls");
+    let opts = [];
+    if (controlled) {
+      const box = document.getElementById(controlled);
+      if (box) opts = $all("[role='option'], li", box);
+    }
+    if (!opts.length) {
+      opts = $all(
+        "[role='listbox'] [role='option'], [role='option'], " +
+        ".basic-typeahead__triggered-content li, .basic-typeahead__selectable, " +
+        ".search-typeahead-v2__hit, ul[class*='typeahead'] li, [class*='typeahead'] [role='option']"
+      );
+    }
+    return opts.filter(visible).filter(o => (o.innerText || "").trim().length > 1);
   }
 
   async function fillTypeahead(el, value) {
-    // Type the value, wait for LinkedIn's suggestion list, click the best option.
-    setVal(el, value);
+    // 1. Focus + simulate real typing so LinkedIn opens the suggestion list.
     el.focus();
-    el.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+    el.click();
+    const proto = HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    // Clear first
+    if (setter) setter.call(el, ""); else el.value = "";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+
+    const v = String(value);
+    // Type char-by-char with key events — LinkedIn's React typeahead listens to these
+    for (let i = 1; i <= v.length; i++) {
+      const partial = v.slice(0, i);
+      if (setter) setter.call(el, partial); else el.value = partial;
+      const ch = v[i - 1];
+      el.dispatchEvent(new KeyboardEvent("keydown", { key: ch, bubbles: true }));
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, data: ch, inputType: "insertText" }));
+      el.dispatchEvent(new KeyboardEvent("keyup", { key: ch, bubbles: true }));
+      await wait(40 + Math.random() * 50);
+    }
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+
+    // 2. Wait for the suggestion list to populate.
     let options = [];
     try {
       options = await waitFor(() => {
-        const opts = $all("[role='listbox'] [role='option'], .basic-typeahead__triggered-content li, .search-typeahead-v2__hit");
-        return opts.filter(visible).length ? opts.filter(visible) : null;
-      }, "typeahead options", 3500);
-    } catch { /* no dropdown — leave typed text */ }
+        const o = typeaheadOptions(el);
+        return o.length ? o : null;
+      }, "typeahead options", 4000);
+    } catch { /* no dropdown appeared */ }
+
+    // 3. Pick the best match (prefer one containing the typed value) and commit it.
     if (options && options.length) {
-      const vl = value.toLowerCase();
-      const best = options.find(o => (o.innerText || "").toLowerCase().includes(vl)) || options[0];
+      const vl = v.toLowerCase();
+      const best = options.find(o => (o.innerText || "").toLowerCase().startsWith(vl)) ||
+                   options.find(o => (o.innerText || "").toLowerCase().includes(vl)) ||
+                   options[0];
+      best.scrollIntoView({ block: "nearest" });
+      await wait(120);
+      // Click the option (mousedown+click — some lists commit on mousedown)
+      best.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      best.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
       best.click();
-      await wait(250);
+      await wait(300);
+      return true;
     }
+
+    // 4. No dropdown — fall back to Enter (some typeaheads accept the raw text)
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, bubbles: true }));
+    await wait(200);
     return true;
   }
 
@@ -667,6 +722,15 @@
       // Easy Apply only
       if (!/easy apply/i.test(card.innerText || "")) continue;
 
+      // Grab the title/company off the card itself (reliable even if the detail
+      // pane extractor returns null on a search page).
+      const cardTitle = (card.querySelector(
+        ".job-card-list__title, .job-card-container__link span[aria-hidden='true'], " +
+        "a.job-card-container__link, .artdeco-entity-lockup__title")?.innerText || "").trim().split("\n")[0];
+      const cardCompany = (card.querySelector(
+        ".job-card-container__primary-description, .artdeco-entity-lockup__subtitle, " +
+        ".job-card-container__company-name")?.innerText || "").trim().split("\n")[0];
+
       // Behave like a person: scroll the card into view, pause to "read"
       card.scrollIntoView({ block: "center" });
       await humanPause(500, 1200);
@@ -704,7 +768,7 @@
         "failed";
       results.push({
         url: link?.href?.split("?")[0] || (id ? `https://www.linkedin.com/jobs/view/${id}/` : null),
-        job_title: job.job_title || null, company: job.company || null,
+        job_title: job.job_title || cardTitle || null, company: job.company || cardCompany || null,
         status, filled: r.filled || 0, cv_used: r.cv_used || null,
         answers: (r.answered || []).map(a => ({ label: a.label, value: a.value })),
         reason: status === "applied" ? null : (r.error || r.stopped || "unknown"),

@@ -50,6 +50,23 @@ function barsHTML(entries, opts = {}){
 }
 function fitClass(s){ s=+s||0; return s>=80?"good":s>=60?"warn":"bad"; }
 
+// Open a URL in the system browser. In the Tauri desktop app a plain target=_blank
+// would navigate the app's own webview; route those through the opener plugin.
+async function openExternal(url){
+  if (!url) return;
+  try {
+    const T = window.__TAURI__;
+    if (T?.opener?.openUrl) { await T.opener.openUrl(url); return; }
+    if (T?.core?.invoke) { await T.core.invoke("plugin:opener|open_url", { url }); return; }
+  } catch (e) { /* fall through to window.open */ }
+  window.open(url, "_blank", "noopener");
+}
+// Delegate clicks on any [data-ext] element to openExternal
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-ext]");
+  if (el) { e.preventDefault(); openExternal(el.getAttribute("data-ext")); }
+});
+
 // Tabs
 $all(".sidebar a").forEach(a => a.addEventListener("click", e => {
   e.preventDefault();
@@ -175,7 +192,7 @@ async function openApp(id){
       <button class="secondary" id="close-dlg">Close</button>
       <button class="danger" id="del-app">Delete</button>
     </div>
-    ${a.url ? `<p class="muted" style="margin-top:14px"><a href="${esc(a.url)}" target="_blank">Open original job posting →</a></p>` : ""}
+    ${a.url ? `<p class="muted" style="margin-top:14px"><a href="#" data-ext="${esc(a.url)}">Open original job posting →</a></p>` : ""}
   `;
   $("#app-detail").showModal();
   $all("#app-detail-body button[data-status]").forEach(b => b.addEventListener("click", async (e) => {
@@ -1584,7 +1601,7 @@ async function loadAutoApplyLog(){
         ${r.reason ? " · " + esc(r.reason) : ""}${r.updated_at ? " · " + new Date(r.updated_at).toLocaleDateString() : ""}
       </div>
       <div class="aa-detail">
-        ${r.url ? `<div style="margin-bottom:6px;"><a href="${esc(r.url)}" target="_blank">Open on LinkedIn →</a></div>` : ""}
+        ${r.url ? `<div style="margin-bottom:6px;"><a href="#" data-ext="${esc(r.url)}">Open job in browser →</a></div>` : ""}
         ${r.is_search ? '<span class="muted">This search auto-queues every Easy-Apply job it finds.</span>'
           : (r.answers || []).length ? `<table>${r.answers.map(a =>
               `<tr><td>${esc(a.label)}</td><td>${esc(String(a.value))}</td></tr>`).join("")}</table>`
@@ -1592,7 +1609,7 @@ async function loadAutoApplyLog(){
       </div>
     </div>`).join("");
   $all(".aa-row").forEach(row => row.addEventListener("click", e => {
-    if (e.target.closest("a")) return;
+    if (e.target.closest("a") || e.target.closest("[data-ext]")) return;
     row.classList.toggle("open");
   }));
 }
