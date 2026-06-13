@@ -34,6 +34,20 @@ const API = {
 };
 
 function esc(s){ return (s ?? "").toString().replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+// Reliable vertical bar chart. entries: [{label, value, color?, title?}]
+function barsHTML(entries, opts = {}){
+  if (!entries.length) return `<div class="muted" style="padding:24px;text-align:center">${esc(opts.empty || "No data yet.")}</div>`;
+  const max = Math.max(1, ...entries.map(e => e.value));
+  return entries.map(e => {
+    const h = Math.round((e.value / max) * 100);
+    const col = e.color ? `style="height:${h}%;background:${e.color}"` : `style="height:${h}%"`;
+    return `<div class="bucket" title="${esc(e.title || (e.label + ": " + e.value))}">
+      <div class="bar-area"><div class="bar" ${col}><span class="bar-val">${esc(e.value)}</span></div></div>
+      <label>${esc(e.label)}</label>
+    </div>`;
+  }).join("");
+}
 function fitClass(s){ s=+s||0; return s>=80?"good":s>=60?"warn":"bad"; }
 
 // Tabs
@@ -73,19 +87,31 @@ async function loadStats(){
     $("#stat-offer").textContent = s.offer;
     $("#stat-avg-fit").textContent = s.avg_fit;
 
-    const total = Math.max(1, Math.max(...Object.values(s.fit_buckets)));
-    $("#fit-buckets").innerHTML = Object.entries(s.fit_buckets).map(([k,v]) => `
-      <div class="bucket"><span>${v}</span>
-        <div class="bar" style="height:${(v/total)*100}%"></div>
-        <label>${k}</label>
-      </div>`).join("");
+    const fitColors = { "0-39": "#ef4444", "40-59": "#f59e0b", "60-79": "#3b82f6", "80-100": "#22c55e" };
+    $("#fit-buckets").innerHTML = barsHTML(
+      Object.entries(s.fit_buckets).map(([k,v]) => ({ label: k, value: v, color: fitColors[k] })),
+      { empty: "No analyzed jobs yet." });
+    $("#by-source").innerHTML = barsHTML(
+      Object.entries(s.by_source || {}).map(([k,v]) => ({ label: (k || "other").replace("auto-apply:", "auto·"), value: v })),
+      { empty: "No applications yet." });
 
-    const maxS = Math.max(1, ...Object.values(s.by_source || {0:1}));
-    $("#by-source").innerHTML = Object.entries(s.by_source || {}).map(([k,v]) => `
-      <div class="bucket"><span>${v}</span>
-        <div class="bar" style="height:${(v/maxS)*100}%"></div>
-        <label>${esc(k || "other")}</label>
-      </div>`).join("") || `<div class="muted">No applications yet.</div>`;
+    // Pipeline funnel — proportional horizontal bars
+    const stages = [
+      { label: "Analyzed / applied", value: s.total || 0, color: "#6366f1" },
+      { label: "Interviewing", value: s.interview || 0, color: "#3b82f6" },
+      { label: "Offers", value: s.offer || 0, color: "#22c55e" },
+    ];
+    const pmax = Math.max(1, ...stages.map(x => x.value));
+    const pipe = $("#pipeline");
+    if (pipe) pipe.innerHTML = stages.map(st => {
+      const pct = Math.round((st.value / pmax) * 100);
+      const conv = stages[0].value ? Math.round((st.value / stages[0].value) * 100) : 0;
+      return `<div class="pipe-row">
+        <div class="pipe-label">${esc(st.label)}</div>
+        <div class="pipe-track"><div class="pipe-fill" style="width:${Math.max(pct,3)}%;background:${st.color}"></div></div>
+        <div class="pipe-val">${st.value}<span class="pipe-conv">${st.label.startsWith("Analyzed") ? "" : " · " + conv + "%"}</span></div>
+      </div>`;
+    }).join("");
   } catch {}
 }
 
@@ -192,9 +218,9 @@ async function loadCvs(){
       <div class="label">${esc(c.label)} ${c.is_active ? '<span class="active">● active</span>' : ''}</div>
       ${c.tag ? `<div class="tag">${esc(c.tag)}</div>` : ""}
       <div class="preview">${esc(c.preview)}…</div>
-      <div style="margin-top:8px">
-        ${!c.is_active ? `<button data-id="${c.id}" class="activate">Make active</button>` : ""}
-        <button data-id="${c.id}" class="danger del">Delete</button>
+      <div>
+        ${!c.is_active ? `<button data-id="${c.id}" class="btn activate">Make active</button>` : ""}
+        <button data-id="${c.id}" class="btn secondary del" style="color:#dc2626">Delete</button>
       </div>
     </div>`).join("") || `<div class="muted">No CVs yet. Upload one above.</div>`;
   $all(".activate").forEach(b => b.addEventListener("click", async () => {
@@ -283,12 +309,9 @@ async function loadAnalytics(){
 
   // Fit by outcome
   const fits = o.avg_fit_by_outcome || {};
-  const keys = ["all","interview","rejected","offer"];
-  const maxF = Math.max(1, ...keys.map(k=>fits[k]||0));
-  $("#fit-by-outcome").innerHTML = keys.map(k=>`
-    <div class="bucket"><span>${fits[k]||0}</span>
-      <div class="bar" style="height:${((fits[k]||0)/maxF)*100}%"></div>
-      <label>${esc(k)}</label></div>`).join("");
+  $("#fit-by-outcome").innerHTML = barsHTML(
+    ["all","interview","rejected","offer"].map(k => ({ label: k, value: fits[k]||0 })),
+    { empty: "No outcomes yet." });
 
   // Response time
   const rt = o.response_times_days || {};
@@ -319,10 +342,9 @@ async function loadAnalytics(){
 
   // Language demand
   const lang = o.language_demand?.by_language || {};
-  const langMax = Math.max(1, ...Object.values(lang));
-  $("#lang-demand").innerHTML = Object.keys(lang).length
-    ? Object.entries(lang).map(([k,v])=>`<div class="bucket"><span>${v}</span><div class="bar" style="height:${(v/langMax)*100}%"></div><label>${esc(k)}</label></div>`).join("")
-    : '<div class="muted">All English so far.</div>';
+  $("#lang-demand").innerHTML = barsHTML(
+    Object.entries(lang).map(([k,v]) => ({ label: k, value: v })),
+    { empty: "All English so far." });
 }
 
 /* ============================== Question library ============================== */
@@ -589,24 +611,36 @@ function renderBankRow(q){
     </div>`;
   }).join("");
 
-  return `<div class="bank-row" data-qid="${q.id}" style="padding:8px 0;border-bottom:1px dashed #f1f5f9">
-    <div class="bank-q-view" style="font-size:13px;${hasAny?'':'color:#92400e'}">
-      ${esc(q.text)}${hasAny?' <span style="color:#16a34a">✓</span>':''}
-      <button class="ghost edit-q" style="background:none;border:none;color:#6b7280;cursor:pointer;font-size:11px;padding:2px 6px;margin-left:6px">edit</button>
-      <span class="muted" style="font-size:11px">[default type: ${esc(inputType)}${opts ? ` · ${opts.length} opts` : ''}]</span>
-      <button class="danger del-bank" data-qid="${q.id}" title="Delete question" style="float:right;padding:4px 8px;font-size:11px">delete</button>
+  // Compact preview of the saved answer (default first), shown when collapsed
+  const previewAns = (byType.text || byType.number || answers[0]);
+  const previewTxt = previewAns ? String(previewAns.answer).replace(/\s+/g, " ").slice(0, 70) : "";
+
+  return `<div class="bank-row collapsed" data-qid="${q.id}">
+    <div class="bank-head">
+      <span class="bank-chevron">›</span>
+      <span class="bank-status ${hasAny ? 'ok' : 'todo'}">${hasAny ? '✓' : '!'}</span>
+      <span class="bank-qtext">${esc(q.text)}</span>
+      <span class="bank-preview">${esc(previewTxt)}</span>
+      <span class="bank-type">${esc(inputType)}</span>
+      <button class="danger del-bank" data-qid="${q.id}" title="Delete question">delete</button>
     </div>
-    <div class="bank-q-edit hidden" style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0">
-      <input class="eq-text" value="${esc(q.text)}" style="flex:1;min-width:240px"/>
-      <select class="eq-type" style="max-width:140px">
-        ${["number","text","textarea","select","radio"].map(t => `<option ${t===inputType?'selected':''}>${t}</option>`).join("")}
-      </select>
-      <input class="eq-options" placeholder="opts (comma-sep)" value="${esc(opts?opts.join(", "):'')}" style="flex:1;min-width:200px"/>
-      <button class="eq-save secondary">Save</button>
-      <button class="eq-cancel ghost" style="background:none;border:none;cursor:pointer;color:#6b7280">cancel</button>
-    </div>
-    <div class="variant-stack" style="margin-top:6px;background:#fafbff;border-radius:8px;padding:8px 10px">
-      ${variantsHtml}
+    <div class="bank-body">
+      <div class="bank-q-view" style="font-size:12px;margin-bottom:6px">
+        <button class="ghost edit-q" style="background:none;border:none;color:#6b7280;cursor:pointer;font-size:11px;padding:2px 6px">✎ edit question</button>
+        <span class="muted" style="font-size:11px">type: ${esc(inputType)}${opts ? ` · ${opts.length} opts` : ''}</span>
+      </div>
+      <div class="bank-q-edit hidden" style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0">
+        <input class="eq-text" value="${esc(q.text)}" style="flex:1;min-width:240px"/>
+        <select class="eq-type" style="max-width:140px">
+          ${["number","text","textarea","select","radio"].map(t => `<option ${t===inputType?'selected':''}>${t}</option>`).join("")}
+        </select>
+        <input class="eq-options" placeholder="opts (comma-sep)" value="${esc(opts?opts.join(", "):'')}" style="flex:1;min-width:200px"/>
+        <button class="eq-save secondary">Save</button>
+        <button class="eq-cancel ghost" style="background:none;border:none;cursor:pointer;color:#6b7280">cancel</button>
+      </div>
+      <div class="variant-stack">
+        ${variantsHtml}
+      </div>
     </div>
   </div>`;
 }
@@ -634,6 +668,11 @@ function renderAnswerInput(qid, inputType, opts, value){
 }
 
 function wireBankRows(){
+  // Collapse/expand each question row on header click (ignore buttons)
+  $all(".bank-head").forEach(h => h.addEventListener("click", (e) => {
+    if (e.target.closest("button")) return;
+    h.closest(".bank-row").classList.toggle("collapsed");
+  }));
   // New: save / delete individual variants
   $all(".save-variant").forEach(b => b.addEventListener("click", async () => {
     const row = b.closest(".variant-row");
@@ -894,13 +933,7 @@ async function loadTimeframes(){
       if (!series.length) {
         chart.innerHTML = '<div class="muted" style="padding:20px;text-align:center">No activity in the last 30 days yet.</div>';
       } else {
-        const max = Math.max(1, ...series.map(d => d.count));
-        chart.innerHTML = series.map(d => `
-          <div class="bucket" title="${esc(d.date)}: ${d.count}">
-            <span>${d.count}</span>
-            <div class="bar" style="height:${(d.count/max)*100}%"></div>
-            <label>${esc(d.date.slice(5))}</label>
-          </div>`).join("");
+        chart.innerHTML = barsHTML(series.map(d => ({ label: d.date.slice(5), value: d.count, title: d.date + ": " + d.count })));
       }
     }
   } catch {}
@@ -1580,7 +1613,7 @@ $("#aa-queue")?.addEventListener("click", async () => {
   if (!urls.length) return;
   const st = $("#aa-queue-status");
   try {
-    const r = await API.post("/applications/queue", { urls });
+    const r = await API.post("/applications/queue", { urls, time_range: $("#aa-time-range")?.value || "any" });
     st.textContent = `${r.queued} added${r.skipped ? `, ${r.skipped} skipped` : ""}. Searches expand into individual jobs once automation runs.`;
     $("#aa-urls").value = "";
     refreshAutoApply();

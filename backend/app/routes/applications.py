@@ -210,6 +210,7 @@ from ..models import AppSettings, ApplicationEvent
 
 class QueueIn(_BM):
     urls: list[str]
+    time_range: str | None = "any"        # 24h | week | month | any
 
 
 class ToggleIn(_BM):
@@ -229,10 +230,17 @@ class AutoResultIn(_BM):
     company: str | None = None
 
 
-def _build_search_url(keyword: str) -> str:
+# LinkedIn "date posted" filter values (f_TPR)
+_TPR = {"24h": "r86400", "week": "r604800", "month": "r2592000", "any": ""}
+
+
+def _build_search_url(keyword: str, time_range: str = "any") -> str:
     from urllib.parse import quote
-    # Easy Apply filter (f_AL=true) so harvest only collects 1-click jobs
-    return f"https://www.linkedin.com/jobs/search/?keywords={quote(keyword)}&f_AL=true"
+    tpr = _TPR.get(time_range or "any", "")
+    url = f"https://www.linkedin.com/jobs/search/?keywords={quote(keyword)}&f_AL=true"
+    if tpr:
+        url += f"&f_TPR={tpr}"
+    return url
 
 
 _SF_HOST = ("successfactors", "sapsf")
@@ -242,7 +250,7 @@ def _is_sf(low: str) -> bool:
     return any(h in low for h in _SF_HOST)
 
 
-def _classify_queue_entry(entry: str):
+def _classify_queue_entry(entry: str, time_range: str = "any"):
     """Returns (url, task, label, platform). task is 'apply' or 'harvest'."""
     e = entry.strip()
     if not e:
@@ -260,8 +268,8 @@ def _classify_queue_entry(entry: str):
             label = "Search: " + e.split("keywords=")[-1].split("&")[0][:40] if "keywords=" in low else "LinkedIn search"
             return (e, "harvest", label, "linkedin")
         return None
-    # Plain text → LinkedIn keyword search (portal keyword search needs a base URL the user provides)
-    return (_build_search_url(e), "harvest", f'Search: "{e}"', "linkedin")
+    # Plain text → LinkedIn Easy-Apply keyword search with the chosen date filter
+    return (_build_search_url(e, time_range), "harvest", f'Search: "{e}"', "linkedin")
 
 
 @router.post("/queue")
@@ -271,7 +279,7 @@ def queue_jobs(body: QueueIn, db: Session = Depends(get_db)):
     queues each one."""
     created, skipped = [], 0
     for entry in body.urls:
-        c = _classify_queue_entry(entry)
+        c = _classify_queue_entry(entry, body.time_range or "any")
         if not c:
             skipped += 1
             continue

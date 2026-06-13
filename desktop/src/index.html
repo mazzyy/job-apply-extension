@@ -22,11 +22,16 @@
       </svg>
       <h1>Job Apply Assistant</h1>
     </div>
-    <div class="status" id="status">
-      <div class="spinner"></div>
-      <div class="message" id="message">Starting backend…</div>
+
+    <div class="loader">
+      <div class="bar-head">
+        <span class="bar-stage" id="bar-stage">Starting up…</span>
+        <span class="bar-pct" id="bar-pct">0%</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill" id="bar-fill"></div></div>
+      <ul class="steps" id="steps"></ul>
     </div>
-    <div class="hint muted">First launch may take 5–10 seconds while we initialize the database.</div>
+
     <div id="error-panel" class="hidden">
       <div class="error-title">Could not start backend</div>
       <pre class="error-detail" id="error-detail"></pre>

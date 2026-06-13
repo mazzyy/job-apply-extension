@@ -673,12 +673,29 @@
       (link || card).click();
       await humanPause(1500, 3000);            // read the job
 
+      // Skip jobs that apply on an external site — don't waste an attempt or log a failure.
+      const hasEasy = !!findEasyApplyButton();
+      const hasExternal = $all("button, a").some(b => visible(b) &&
+        /^\s*apply\b/i.test((b.innerText || "").trim()) && !/easy apply/i.test(b.innerText));
+      if (!hasEasy && hasExternal) {
+        log("skip external-apply job", id);
+        try { chrome.runtime.sendMessage({ type: "EASYAPPLY_PROGRESS",
+          step: results.length, filled: 0, note: "skipped (external apply) · " + id }); } catch {}
+        await humanPause(2000, 4000);
+        continue;
+      }
+
       // Apply in the right pane (reuse the full guided/auto driver, no extra logging)
       let r;
       try {
         r = await window.__jaaRunEasyApply({ autoSubmit: options.autoSubmit, noLog: true });
       } catch (e) {
         r = { error: e.message };
+      }
+      // External-apply detected inside the driver → skip, not fail
+      if (/external site|external apply/i.test(r.error || "")) {
+        await humanPause(1500, 3000);
+        continue;
       }
       const job = r.job || {};
       const status =
