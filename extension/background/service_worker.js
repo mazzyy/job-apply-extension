@@ -10,8 +10,40 @@ chrome.action.onClicked.addListener(async (tab) => {
   try { await chrome.sidePanel.open({ tabId: tab.id }); } catch (e) { console.warn(e); }
 });
 
+// The desktop app may run the backend on 8000 OR a fallback port (8001-8010)
+// if 8000 is taken. Probe to find the live Job Apply Assistant backend so the
+// extension always talks to the same one the dashboard uses.
+const PROBE_PORTS = [8000, 8005, 8001, 8002, 8003, 8004, 8006, 8007, 8008, 8009, 8010];
+let _discoveredBase = null;
+let _lastProbe = 0;
+
+async function probeBackend() {
+  for (const port of PROBE_PORTS) {
+    for (const host of ["127.0.0.1", "localhost"]) {
+      const base = `http://${host}:${port}`;
+      try {
+        const r = await fetch(`${base}/health`, { signal: AbortSignal.timeout(700) });
+        if (r.ok) {
+          const j = await r.json().catch(() => ({}));
+          if (j.service === "job-apply-assistant" || j.status === "ok" || j.model) return base;
+        }
+      } catch { /* not this one */ }
+    }
+  }
+  return null;
+}
+
 async function getApiBase() {
+  // 1. Explicit user override always wins
   const { apiBase } = await chrome.storage.sync.get("apiBase");
+  if (apiBase && apiBase !== DEFAULT_API_BASE) return apiBase;
+
+  // 2. Use a recently-discovered base (re-probe at most every 30s)
+  if (_discoveredBase && Date.now() - _lastProbe < 30000) return _discoveredBase;
+
+  // 3. Probe; cache the result
+  const found = await probeBackend();
+  if (found) { _discoveredBase = found; _lastProbe = Date.now(); return found; }
   return apiBase || DEFAULT_API_BASE;
 }
 

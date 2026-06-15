@@ -1,6 +1,6 @@
 """List and update job applications, plus dashboard stats."""
 import json
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Request, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -350,9 +350,17 @@ def auto_apply_status(db: Session = Depends(get_db)):
 
 
 @router.post("/auto-apply/heartbeat")
-def auto_apply_heartbeat(body: dict = None):
-    """Explicit ping (the header middleware also marks liveness on every call)."""
-    _ws.mark((body or {}).get("action") or "heartbeat")
+async def auto_apply_heartbeat(request: Request):
+    """Explicit ping (the header middleware also marks liveness on every call).
+    Body is optional — accept anything, never 422."""
+    action = "heartbeat"
+    try:
+        body = await request.json()
+        if isinstance(body, dict) and body.get("action"):
+            action = body["action"]
+    except Exception:
+        pass
+    _ws.mark(action)
     return {"ok": True}
 
 

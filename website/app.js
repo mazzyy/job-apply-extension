@@ -871,15 +871,24 @@ async function loadProviderSettings(){
       </label>
     `).join("");
   }
-  // Show/hide local config based on mode
-  const localCfg = $("#local-config");
-  if (localCfg) localCfg.style.opacity = (mode === "cloud") ? "0.5" : "1";
+  applyProviderVisibility(mode);
+}
+
+function applyProviderVisibility(mode){
+  // Cloud key relevant for cloud + hybrid; local model relevant for local + hybrid.
+  const cloud = $("#cloud-config"), local = $("#local-config");
+  if (cloud) cloud.classList.toggle("hidden", mode === "local");
+  if (local) local.classList.toggle("hidden", mode === "cloud");
 }
 
 document.querySelectorAll("input[name=provider]").forEach(r => r.addEventListener("change", () => {
-  const localCfg = $("#local-config");
-  if (localCfg) localCfg.style.opacity = (r.value === "cloud") ? "0.5" : "1";
+  if (r.checked) applyProviderVisibility(r.value);
 }));
+
+$("#azure-advanced-toggle")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  $("#azure-advanced")?.classList.toggle("hidden");
+});
 
 $("#save-provider")?.addEventListener("click", async () => {
   const provider = document.querySelector("input[name=provider]:checked")?.value || "cloud";
@@ -890,10 +899,22 @@ $("#save-provider")?.addEventListener("click", async () => {
     if (sel.value) per_task[sel.dataset.task] = sel.value;
   });
   $("#provider-status").textContent = "Saving…";
-  await API.put("/settings/", { llm_provider: provider, local_model, local_base_url, per_task });
-  $("#provider-status").textContent = "Saved.";
-  setTimeout(() => $("#provider-status").textContent = "", 1800);
+  const payload = { llm_provider: provider, local_model, local_base_url, per_task };
+  // Fold Azure credentials into the same Save (empty fields = leave unchanged)
+  const ak = $("#azure-api-key")?.value.trim();
+  const ad = $("#azure-deployment")?.value.trim();
+  const ae = $("#azure-endpoint")?.value.trim();
+  const av = $("#azure-api-version")?.value.trim();
+  if (ak) payload.azure_api_key = ak;
+  if (ad) payload.azure_deployment = ad;
+  if (ae) payload.azure_endpoint = ae;
+  if (av) payload.azure_api_version = av;
+  await API.put("/settings/", payload);
+  if ($("#azure-api-key")) $("#azure-api-key").value = "";
+  $("#provider-status").textContent = "✓ Saved.";
+  setTimeout(() => $("#provider-status").textContent = "", 2000);
   await checkApi();
+  await loadProviderSettings();
 });
 
 $("#test-connection")?.addEventListener("click", async () => {
@@ -1555,19 +1576,23 @@ async function refreshAutoApply(){
     ? `<span class="aa-badge aa-applied">running</span>`
     : `<span class="aa-badge aa-queued">stopped</span>`;
   $("#aa-stats").innerHTML = `
-    <div class="aa-stat"><b>${st.queued}</b>queued jobs</div>
-    <div class="aa-stat"><b>${st.searches || 0}</b>searches to expand</div>
-    <div class="aa-stat"><b>${st.applied_today}</b>applied today${st.cap_reached ? " <span style='color:#b91c1c;font-size:11px;'>(cap reached)</span>" : ""}</div>`;
+    <div class="aa-stat"><b>${st.queued}</b><div class="aa-stat-label">queued jobs</div></div>
+    <div class="aa-stat"><b>${st.searches || 0}</b><div class="aa-stat-label">searches to expand</div></div>
+    <div class="aa-stat"><b>${st.applied_today}</b><div class="aa-stat-label">applied today${st.cap_reached ? " · <span style='color:#b91c1c'>cap reached</span>" : ""}</div></div>`;
   const w = $("#aa-worker");
   if (st.worker_online) {
     w.className = "aa-worker on";
     w.innerHTML = `<span class="dot"></span> Extension connected${
       st.worker_action && st.worker_action !== "idle"
         ? " — " + esc(st.worker_action) : st.enabled ? " — waiting for next slot (runs every minute)" : ""}`;
-  } else {
+  } else if (st.worker_age_sec === null) {
+    // Genuinely never seen — likely the extension isn't loaded or backend was just restarted.
     w.className = "aa-worker off";
-    w.innerHTML = `<span class="dot"></span> Extension not responding — open chrome://extensions and click <b>Reload</b> on Job Apply Assistant, and keep Chrome open. ${
-      st.worker_age_sec === null ? "(never seen since backend start)" : `(last seen ${st.worker_age_sec}s ago)`}`;
+    w.innerHTML = `<span class="dot"></span> Waiting for the extension… If this stays red for a minute, open <b>chrome://extensions</b>, reload Job Apply Assistant, and keep Chrome open.`;
+  } else {
+    // Seen before but went quiet (worker asleep) — soft warning, not an error.
+    w.className = "aa-worker idle";
+    w.innerHTML = `<span class="dot"></span> Extension idle (last active ${st.worker_age_sec}s ago) — it wakes on the next check.`;
   }
   loadAutoApplyLog();
 }
