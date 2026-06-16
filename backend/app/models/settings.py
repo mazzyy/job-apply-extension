@@ -40,4 +40,9 @@ class AppSettings(Base):
     auto_apply_mode = Column(String(20), default="session")   # session | tabs
     portal_auto_submit = Column(Integer, default=0)           # 0 = fill & stop for review, 1 = auto-submit
 
+    # Auto-apply driver: which browser runs auto-apply.
+    #   "system"     = the Chrome extension drives it in the user's own browser (legacy default)
+    #   "integrated" = the in-app embedded browser drives it (desktop app)
+    browser_mode = Column(String(20), default="system")
+
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

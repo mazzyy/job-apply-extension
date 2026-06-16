@@ -54,6 +54,7 @@ def ensure_schema():
         ("app_settings", "auto_apply_daily_cap", "INTEGER DEFAULT 15"),
         ("app_settings", "auto_apply_mode", "VARCHAR(20) DEFAULT 'session'"),
         ("app_settings", "portal_auto_submit", "INTEGER DEFAULT 0"),
+        ("app_settings", "browser_mode", "VARCHAR(20) DEFAULT 'system'"),
         ("profiles", "portal_password", "VARCHAR(200)"),
     ]
     with engine.begin() as conn:

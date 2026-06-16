@@ -342,6 +342,7 @@ def auto_apply_status(db: Session = Depends(get_db)):
         "cap_reached": applied_today >= cap,
         "mode": mode,
         "portal_auto_submit": bool(row.portal_auto_submit),
+        "browser_mode": (row.browser_mode or "system"),
         "next": nxt,
         "worker_online": _wstat["online"],
         "worker_age_sec": _wstat["age_sec"],

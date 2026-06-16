@@ -88,4 +88,7 @@ if [ "${BUNDLE_OLLAMA:-0}" = "1" ]; then
   echo "  ✓ Ollama bundled"
 fi
 
+# Mirror the content-script engines for the integrated browser.
+bash "$DESKTOP_DIR/scripts/bundle-automation.sh" || true
+
 echo "✓ Resources ready. Tauri build continues."

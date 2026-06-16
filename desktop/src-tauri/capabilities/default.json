@@ -1,18 +1,24 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default permissions for the main window",
+  "description": "Permissions for the main window and the locally-served dashboard it loads (so integrated.js can drive the browser webview).",
   "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*/*", "http://localhost:*/*"]
+  },
   "permissions": [
     "core:default",
+    "core:event:default",
     "core:window:allow-set-title",
     "core:window:allow-show",
     "core:window:allow-hide",
+    "core:window:allow-set-focus",
     "core:webview:allow-create-webview-window",
     "shell:allow-open",
     "shell:allow-execute",
     "dialog:allow-open",
     "dialog:allow-message",
-    "opener:default"
+    "opener:default",
+    "allow-integrated-browser"
   ]
 }

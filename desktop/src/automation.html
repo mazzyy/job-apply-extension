@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Auto-Apply</title>
+  <link rel="stylesheet" href="automation.css" />
+</head>
+<body>
+  <div class="panel">
+    <header class="hd">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">✓</span>
+        <span>Auto-Apply</span>
+        <span class="dot off" id="conn" title="Backend"></span>
+      </div>
+      <div class="seg" role="tablist" title="Which browser runs auto-apply">
+        <button id="mode-integrated" class="active">Integrated</button>
+        <button id="mode-system">System</button>
+      </div>
+    </header>
+
+    <p class="note" id="mode-note"></p>
+
+    <button id="toggle-run" class="run">Start auto-apply</button>
+
+    <div class="stats">
+      <div class="stat"><b id="stat-applied">0</b><span>applied today</span></div>
+      <div class="stat"><b id="stat-cap">–</b><span>daily cap</span></div>
+      <div class="stat"><b id="stat-queued-li">0</b><span>LinkedIn queued</span></div>
+      <div class="stat"><b id="stat-queued-portal">0</b><span>portals queued</span></div>
+    </div>
+
+    <div class="actions">
+      <button id="btn-signin" class="ghost">Sign in to LinkedIn</button>
+      <button id="btn-dashboard" class="ghost">Dashboard</button>
+      <button id="btn-width" class="ghost" title="Cycle panel width">⟷</button>
+    </div>
+
+    <div class="action-line" id="current-action"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+
+    <footer class="ft">Integrated browser · applies to jobs inside the app</footer>
+  </div>
+
+  <script src="registry.js"></script>
+  <script type="module" src="automation.js"></script>
+</body>
+</html>

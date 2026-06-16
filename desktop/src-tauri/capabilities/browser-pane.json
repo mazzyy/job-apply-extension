@@ -1,0 +1,22 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "browser-pane",
+  "description": "Minimal event-only IPC for the integrated browser pane (remote job sites). It can emit/listen to events so the engines can return results to the panel — nothing else.",
+  "webviews": ["browser"],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:*/*",
+      "http://localhost:*/*",
+      "https://*.linkedin.com/*",
+      "https://*.greenhouse.io/*",
+      "https://*.lever.co/*",
+      "https://*.ashbyhq.com/*",
+      "https://*.successfactors.com/*",
+      "https://*.successfactors.eu/*",
+      "https://*.sapsf.com/*",
+      "https://*.sapsf.eu/*",
+      "https://*.myworkdayjobs.com/*"
+    ]
+  },
+  "permissions": ["core:event:allow-emit", "core:event:allow-listen"]
+}

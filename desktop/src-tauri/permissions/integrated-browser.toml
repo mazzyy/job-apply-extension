@@ -1,0 +1,14 @@
+# App-defined permission: lets the locally-served dashboard (a "remote" origin
+# from Tauri's view) call the integrated-browser commands. Without this, those
+# commands are blocked for remote content with "not allowed by ACL".
+[[permission]]
+identifier = "allow-integrated-browser"
+description = "Allow the dashboard to drive the integrated browser webview (show/hide/navigate/inject/eval)."
+commands.allow = [
+    "browser_show",
+    "browser_hide",
+    "browser_set_bounds",
+    "browser_navigate",
+    "browser_eval",
+    "browser_inject",
+]

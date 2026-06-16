@@ -140,6 +140,13 @@ async function runAutoApplyTick() {
     await sendHeartbeat(autoApplyBusy ? "working" : "idle");
   } catch { return; }   // backend offline
 
+  // Driver coordination: stand down when the in-app integrated browser is the
+  // active driver, so the extension and the desktop app never double-apply.
+  if (st.browser_mode && st.browser_mode !== "system") {
+    await sendHeartbeat("idle · integrated browser active");
+    return;
+  }
+
   if (autoApplyBusy || !st.enabled || !st.next) return;
   if (st.next.task === "apply" && st.cap_reached) return;
 

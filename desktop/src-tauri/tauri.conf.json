@@ -4,7 +4,7 @@
   "version": "0.10.0",
   "identifier": "com.jobapplyassistant.desktop",
   "build": {
-    "beforeDevCommand": "",
+    "beforeDevCommand": "bash ./scripts/bundle-automation.sh",
     "beforeBuildCommand": "bash ./scripts/bundle-resources.sh",
     "devUrl": null,
     "frontendDist": "../src"

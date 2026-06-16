@@ -12,6 +12,7 @@
 mod backend;
 mod ollama;
 mod commands;
+mod browser;
 
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
@@ -45,6 +46,12 @@ pub fn run() {
             commands::set_provider,
             commands::open_dashboard,
             commands::ollama_status,
+            browser::browser_show,
+            browser::browser_hide,
+            browser::browser_set_bounds,
+            browser::browser_navigate,
+            browser::browser_eval,
+            browser::browser_inject,
         ])
         .setup(|app| {
             // Resolve the writable data directory (set via env so the backend picks it up)
