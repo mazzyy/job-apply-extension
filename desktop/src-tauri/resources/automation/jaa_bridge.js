@@ -123,5 +123,14 @@
   }
   chrome.storage = { sync: storageArea("sync"), local: storageArea("local"), session: storageArea("session") };
 
+  // Keep external "Apply" navigations inside this webview (no new windows/tabs).
+  try { window.open = function (u) { if (u) { try { location.assign(u); } catch (e) { location.href = u; } } return window; }; } catch (e) {}
+  try {
+    document.addEventListener("click", function (e) {
+      var a = e.target && e.target.closest && e.target.closest("a[target]");
+      if (a && /_blank/i.test(a.getAttribute("target") || "")) a.setAttribute("target", "_self");
+    }, true);
+  } catch (e) {}
+
   rawEmit("jaa-bridge-ready", { url: location.href });
 })();

@@ -10,6 +10,8 @@ from ..services.events import emit
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
+JAA_BUILD = "2026-06-16-faststart"  # bump on every change; surfaced in /auto-apply/status
+
 class LogRequest(BaseModel):
     """Used when the user triggers Autofill on a page without analyzing first.
     We create a lightweight Application row so the dashboard tallies it."""
@@ -234,10 +236,12 @@ class AutoResultIn(_BM):
 _TPR = {"24h": "r86400", "week": "r604800", "month": "r2592000", "any": ""}
 
 
-def _build_search_url(keyword: str, time_range: str = "any") -> str:
+def _build_search_url(keyword: str, time_range: str = "any", apply_types: str = "easy") -> str:
     from urllib.parse import quote
     tpr = _TPR.get(time_range or "any", "")
-    url = f"https://www.linkedin.com/jobs/search/?keywords={quote(keyword)}&f_AL=true"
+    url = f"https://www.linkedin.com/jobs/search/?keywords={quote(keyword)}"
+    if apply_types == "easy":
+        url += "&f_AL=true"   # Easy Apply filter; omit to include direct/external jobs
     if tpr:
         url += f"&f_TPR={tpr}"
     return url
@@ -254,11 +258,15 @@ def _manual_platform(low: str) -> str:
     if "greenhouse.io" in low: return "greenhouse"
     if "lever.co" in low: return "lever"
     if "ashbyhq.com" in low: return "ashby"
+    if "personio." in low: return "personio"
+    if "smartrecruiters.com" in low: return "smartrecruiters"
+    if "workable.com" in low: return "workable"
+    if "recruitee.com" in low: return "recruitee"
     if "myworkdayjobs.com" in low or "workday" in low: return "workday"
     return "manual"
 
 
-def _classify_queue_entry(entry: str, time_range: str = "any"):
+def _classify_queue_entry(entry: str, time_range: str = "any", apply_types: str = "easy"):
     """Returns (url, task, label, platform). task is 'apply' or 'harvest'."""
     e = entry.strip()
     if not e:
@@ -286,7 +294,7 @@ def _classify_queue_entry(entry: str, time_range: str = "any"):
         # Any other career-site URL → a MANUAL job (we assist, you submit).
         return (e, "manual", None, _manual_platform(low))
     # Plain text → LinkedIn Easy-Apply keyword search with the chosen date filter
-    return (_build_search_url(e, time_range), "harvest", f'Search: "{e}"', "linkedin")
+    return (_build_search_url(e, time_range, apply_types), "harvest", f'Search: "{e}"', "linkedin")
 
 
 @router.post("/queue")
@@ -295,8 +303,10 @@ def queue_jobs(body: QueueIn, db: Session = Depends(get_db)):
     plain keyword becomes a 'harvest' task that scrapes all Easy-Apply jobs and
     queues each one."""
     created, skipped = [], 0
+    _row = db.query(AppSettings).first()
+    _apply_types = (getattr(_row, "apply_types", None) or "easy") if _row else "easy"
     for entry in body.urls:
-        c = _classify_queue_entry(entry, body.time_range or "any")
+        c = _classify_queue_entry(entry, body.time_range or "any", _apply_types)
         if not c:
             skipped += 1
             continue
@@ -328,6 +338,7 @@ def auto_apply_status(db: Session = Depends(get_db)):
     cap = row.auto_apply_daily_cap or 15
     enabled = bool(row.auto_apply_enabled)
     _ext_on = bool(getattr(row, "auto_apply_external", 0))
+    _apply_types = getattr(row, "apply_types", None) or "easy"
 
     mode = (row.auto_apply_mode or "session")
     nxt = None
@@ -338,7 +349,7 @@ def auto_apply_status(db: Session = Depends(get_db)):
                 .order_by(Application.id.asc()).first())
         def _plat(a):
             return (a.source or "").split(":")[-1] if a and ":" in (a.source or "") else "linkedin"
-        if mode == "session" and srow and applied_today < cap and _plat(srow) == "linkedin":
+        if mode == "session" and _apply_types == "easy" and srow and applied_today < cap and _plat(srow) == "linkedin":
             nxt = {"id": srow.id, "url": srow.url, "task": "session",
                    "platform": "linkedin", "remaining": cap - applied_today}
         elif srow:
@@ -346,9 +357,8 @@ def auto_apply_status(db: Session = Depends(get_db)):
         elif arow and applied_today < cap:
             nxt = {"id": arow.id, "url": arow.url, "task": "apply", "platform": _plat(arow)}
         elif _ext_on and applied_today < cap:
-            mrows = (db.query(Application).filter(Application.status == "queued_manual")
-                     .order_by(Application.id.asc()).all())
-            mrow = next((m for m in mrows if _plat(m) in ("greenhouse", "lever", "ashby")), None)
+            mrow = (db.query(Application).filter(Application.status == "queued_manual")
+                    .order_by(Application.id.asc()).first())
             if mrow:
                 nxt = {"id": mrow.id, "url": mrow.url, "task": "apply", "platform": _plat(mrow)}
     li_queued = sum(1 for a in db.query(Application).filter(Application.status.in_(("queued","queued_search"))).all()
@@ -368,6 +378,8 @@ def auto_apply_status(db: Session = Depends(get_db)):
         "portal_auto_submit": bool(row.portal_auto_submit),
         "browser_mode": (row.browser_mode or "system"),
         "auto_apply_external": _ext_on,
+        "apply_types": _apply_types,
+        "build": JAA_BUILD,
         "next": nxt,
         "worker_online": _wstat["online"],
         "worker_age_sec": _wstat["age_sec"],
@@ -562,10 +574,13 @@ def auto_apply_log(limit: int = 80, platform: str = "", db: Session = Depends(ge
     platform: 'linkedin' | 'successfactors' | '' (all)."""
     rows = (db.query(Application)
             .filter(Application.source.like("auto-apply%") |
-                    Application.status.in_(("queued", "queued_search", "expanded", "needs_review", "failed")))
+                    Application.status.in_(("queued", "queued_manual", "queued_search", "expanded", "needs_review", "failed")))
             .order_by(Application.id.desc()).limit(300).all())
-    if platform:
-        rows = [a for a in rows if _platform_of(a) == platform]
+    if platform == "linkedin":
+        rows = [a for a in rows if _platform_of(a) == "linkedin"]
+    elif platform:
+        # "Portals" tab → everything that isn't LinkedIn (SuccessFactors + Greenhouse/Lever/Ashby/Personio/…)
+        rows = [a for a in rows if _platform_of(a) != "linkedin"]
     rows = rows[:limit]
     out = []
     for a in rows:

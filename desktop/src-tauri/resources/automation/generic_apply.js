@@ -64,6 +64,10 @@
     if (/greenhouse\.io/.test(h) || document.querySelector("#grnhse_app, #application_form, .application--form")) return "greenhouse";
     if (/lever\.co/.test(h) || document.querySelector(".application-form, [data-qa='btn-submit']")) return "lever";
     if (/ashbyhq\.com/.test(h) || document.querySelector("[class*='_applicationForm'], form[class*='ashby']")) return "ashby";
+    if (/personio\.(de|com)|jobs\.personio/.test(h)) return "personio";
+    if (/smartrecruiters\.com/.test(h)) return "smartrecruiters";
+    if (/workable\.com/.test(h)) return "workable";
+    if (/recruitee\.com/.test(h)) return "recruitee";
     if (/myworkdayjobs\.com|workday/.test(h)) return "workday";
     return "generic";
   }
@@ -177,7 +181,7 @@
     opts = opts || {};
     const autoSubmit = opts.autoSubmit !== false;
     const applicationId = opts.applicationId || null;
-    const supported = opts.supported || ["greenhouse", "lever", "ashby"];
+    const supported = opts.supported || ["greenhouse", "lever", "ashby", "personio", "smartrecruiters", "workable", "recruitee"];
     try {
       const ats = detectATS();
       await clickApplyTrigger();

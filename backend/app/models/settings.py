@@ -48,4 +48,7 @@ class AppSettings(Base):
     # Fully auto-submit external ATS portals (Greenhouse / Lever / Ashby)
     auto_apply_external = Column(Integer, default=0)
 
+    # Which LinkedIn jobs to apply to: "easy" | "direct" | "both"
+    apply_types = Column(String(20), default="easy")
+
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

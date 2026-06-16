@@ -664,7 +664,7 @@
   }
 
   /* ------------ Harvest: collect Easy-Apply job links from a search page ------------ */
-  window.__jaaHarvestJobs = async function (maxJobs = 25) {
+  window.__jaaHarvestJobs = async function (maxJobs = 25, includeDirect = false) {
     if (!/linkedin\.com\/jobs\/(search|collections)/.test(location.href)) {
       // A /jobs/view url with currentJobId still has the list pane — allow it
       if (!document.querySelector(".scaffold-layout__list, .jobs-search-results-list")) {
@@ -681,8 +681,8 @@
         if (!m) return;
         const card = a.closest("li, .job-card-container, .jobs-search-results__list-item");
         const txt = (card?.innerText || "").toLowerCase();
-        // Easy Apply only (search may include external-apply jobs even with the filter)
-        if (card && !/easy apply|easy-apply/i.test(txt)) return;
+        // Easy Apply only — unless includeDirect, then keep external/direct jobs too.
+        if (!includeDirect && card && !/easy apply|easy-apply/i.test(txt)) return;
         const id = m[1];
         if (!found.has(id)) found.set(id, `https://www.linkedin.com/jobs/view/${id}/`);
       });
@@ -704,6 +704,22 @@
       collect();
     }
     return { urls: Array.from(found.values()).slice(0, maxJobs) };
+  };
+
+  /* ------------ Direct (external) apply: detection + trigger ------------ */
+  window.__jaaDetectApply = function () {
+    try {
+      if (findEasyApplyButton()) return { type: "easy" };
+      const ext = Array.from(document.querySelectorAll("button, a"))
+        .find(b => visible(b) && /^\s*apply\b/i.test((b.innerText || "").trim()) && !/easy apply/i.test(b.innerText || ""));
+      return { type: ext ? "direct" : "none" };
+    } catch (e) { return { type: "none", error: String(e) }; }
+  };
+  window.__jaaClickExternalApply = function () {
+    const ext = Array.from(document.querySelectorAll("button, a"))
+      .find(b => visible(b) && /^\s*apply\b/i.test((b.innerText || "").trim()) && !/easy apply/i.test(b.innerText || ""));
+    if (ext) { try { ext.scrollIntoView({ block: "center" }); } catch (e) {} ext.click(); return true; }
+    return false;
   };
 
   /* ------------ Human-ish pacing helpers ------------ */

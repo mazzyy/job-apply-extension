@@ -1611,7 +1611,7 @@ async function loadAutoApplyLog(){
     }
     return r.url ? r.url.replace(/^https?:\/\/(www\.)?linkedin\.com/, "").slice(0, 50) : "?";
   }
-  const platLabel = { linkedin: "LinkedIn", successfactors: "Portal" };
+  const platLabel = { linkedin: "LinkedIn", successfactors: "SuccessFactors", greenhouse: "Greenhouse", lever: "Lever", ashby: "Ashby", personio: "Personio", smartrecruiters: "SmartRecruiters", workable: "Workable", recruitee: "Recruitee", workday: "Workday", manual: "External" };
   box.innerHTML = rows.map(r => `
     <div class="aa-row" data-id="${r.id}">
       <div class="aa-row-top">

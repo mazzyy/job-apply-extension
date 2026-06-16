@@ -51,19 +51,28 @@ async def _gmail_poll_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup verification — runs once when uvicorn boots.
-    log.info("Verifying Azure OpenAI deployment '%s' at %s …",
-             settings.AZURE_OPENAI_DEPLOYMENT, settings.AZURE_OPENAI_ENDPOINT)
-    info = verify_model()
-    if info.get("ok"):
-        log.info("✓ Model reachable. Reply: %r", info.get("reply"))
-    else:
-        log.error("✗ Model verification FAILED: %s", info.get("error"))
-        log.error("  → Check AZURE_OPENAI_DEPLOYMENT/API_KEY/API_VERSION in backend/.env")
-    app.state.model_status = info
+    # IMPORTANT: never block startup on the Azure check — the server must accept
+    # /health immediately or the desktop splash hangs. Verify in the background.
     import asyncio
+    app.state.model_status = {"ok": False, "pending": True}
+
+    async def _verify_model_bg():
+        try:
+            info = await asyncio.to_thread(verify_model)
+        except Exception as e:
+            info = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        app.state.model_status = info
+        if info.get("ok"):
+            log.info("✓ Model reachable. Reply: %r", info.get("reply"))
+        else:
+            log.error("✗ Model verification FAILED: %s", info.get("error"))
+
+    log.info("Verifying Azure OpenAI '%s' at %s … (background)",
+             settings.AZURE_OPENAI_DEPLOYMENT, settings.AZURE_OPENAI_ENDPOINT)
+    verify_task = asyncio.create_task(_verify_model_bg())
     poll_task = asyncio.create_task(_gmail_poll_loop())
     yield
+    verify_task.cancel()
     poll_task.cancel()
 
 
