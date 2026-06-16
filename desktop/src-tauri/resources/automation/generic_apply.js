@@ -111,8 +111,8 @@
       const ans = await apiPost("/questions/answer-for-form", { text: label, input_type: it, options: options || null, max_length: (el.maxLength > 0 ? el.maxLength : null), application_id: applicationId, save: true });
       if (ans && ans.value != null && String(ans.value).length) {
         if (setVal(el, ans.value)) { out.filled++; cache.set(label, ans.value); out.answered.push({ label, value: ans.value, needs_review: ans.needs_review, qid: ans.question_id }); }
-        else if (required) out.blanks.push(label.slice(0, 80));
-      } else if (required) out.blanks.push(label.slice(0, 80));
+        else if (required) out.blanks.push({ label: label.slice(0, 120), type: it, options: options || null });
+      } else if (required) out.blanks.push({ label: label.slice(0, 120), type: it, options: options || null });
     }
     // radio groups
     const groups = new Map();
@@ -130,12 +130,15 @@
         if (dec) { dec.click(); dec.dispatchEvent(new Event("change", { bubbles: true })); out.filled++; }
         continue;
       }
+      const requiredR = radios.some(r => r.required || r.getAttribute("aria-required") === "true") ||
+        (wrap && /\*|required|erforderlich|pflicht/i.test(wrap.innerText || ""));
       const ans = await apiPost("/questions/answer-for-form", { text: label, input_type: "radio", options: opts, application_id: applicationId, save: true });
       const want = ans && ans.value != null ? String(ans.value).toLowerCase() : null;
-      if (!want) continue;
-      const pick = radios.find(r => radioOptionText(r).toLowerCase() === want) ||
+      let pick = null;
+      if (want) pick = radios.find(r => radioOptionText(r).toLowerCase() === want) ||
         radios.find(r => { const x = radioOptionText(r).toLowerCase(); return x && (x.startsWith(want) || want.startsWith(x) || x.includes(want)); });
-      if (pick) { pick.click(); pick.dispatchEvent(new Event("change", { bubbles: true })); out.filled++; out.answered.push({ label, value: radioOptionText(pick), needs_review: ans.needs_review, qid: ans.question_id }); }
+      if (pick) { pick.click(); pick.dispatchEvent(new Event("change", { bubbles: true })); out.filled++; out.answered.push({ label, value: radioOptionText(pick), needs_review: ans && ans.needs_review, qid: ans && ans.question_id }); }
+      else if (requiredR) out.blanks.push({ label: label.slice(0, 120), type: "radio", options: opts });
     }
     return out;
   }
@@ -177,6 +180,42 @@
       /confirmation|thank|applied/i.test(location.href);
   }
 
+  // Fill specific answers the user just provided (by label), for the ask-&-save loop.
+  window.__jaaFillAnswers = async function (list) {
+    let n = 0;
+    for (const item of (list || [])) {
+      const val = item && item.value; if (val == null || val === "") continue;
+      const key = String(item.label || "").toLowerCase().slice(0, 40);
+      if (!key) continue;
+      const f = findFields(document).find(el => {
+        const t = (el.type || "").toLowerCase();
+        if (["radio", "checkbox", "hidden", "file", "submit", "button"].indexOf(t) >= 0) return false;
+        return labelFor(el).toLowerCase().indexOf(key) >= 0;
+      });
+      if (f) { if (setVal(f, val)) n++; continue; }
+      const radios = Array.from(document.querySelectorAll("input[type='radio']")).filter(visible).filter(r => {
+        const wrap = r.closest("fieldset, [class*='field'], [class*='question']");
+        const lab = ((wrap && wrap.querySelector("legend, [class*='label'], [class*='question']") && wrap.querySelector("legend, [class*='label'], [class*='question']").innerText) || "").toLowerCase();
+        return lab.indexOf(key) >= 0;
+      });
+      const wl = String(val).toLowerCase();
+      const pick = radios.find(r => radioOptionText(r).toLowerCase() === wl) ||
+        radios.find(r => { const x = radioOptionText(r).toLowerCase(); return x && (x.indexOf(wl) >= 0 || wl.indexOf(x) >= 0); });
+      if (pick) { pick.click(); pick.dispatchEvent(new Event("change", { bubbles: true })); n++; }
+    }
+    return n;
+  };
+  window.__jaaSubmitForm = async function () {
+    tickConsents();
+    if (isCaptcha()) return { stopped: "captcha", error: "captcha before submit" };
+    const btn = findSubmit();
+    if (!btn) return { stopped: "ready_to_submit", reason: "no submit button found" };
+    btn.click(); await wait(3000);
+    if (submittedOK()) return { stopped: "submitted" };
+    const again = findSubmit(); if (again) { again.click(); await wait(3000); }
+    return submittedOK() ? { stopped: "submitted" } : { stopped: "submit_unconfirmed", reason: "clicked submit; confirmation not detected — verify" };
+  };
+
   window.__jaaGenericApply = async function (opts) {
     opts = opts || {};
     const autoSubmit = opts.autoSubmit !== false;
@@ -197,9 +236,13 @@
       const filled = pf + res.filled;
 
       if (supported.indexOf(ats) < 0) {
-        return { stopped: "needs_account", ats, filled, answered: res.answered, reason: "Portal not auto-submittable (" + ats + ") — review & submit" };
+        return { stopped: "needs_account", ats, filled, answered: res.answered, missing: res.blanks, reason: "Portal not auto-submittable (" + ats + ") — review & submit" };
       }
-      if (!autoSubmit) return { stopped: "ready_to_submit", ats, filled, answered: res.answered };
+      if (!autoSubmit) return { stopped: "ready_to_submit", ats, filled, answered: res.answered, missing: res.blanks };
+      // Don't blind-submit: if required fields are still empty, ask the user (ask & save).
+      if (res.blanks && res.blanks.length) {
+        return { stopped: "needs_input", ats, filled, answered: res.answered, missing: res.blanks };
+      }
       if (isCaptcha()) return { stopped: "captcha", ats, filled, answered: res.answered, error: "captcha before submit" };
 
       const btn = findSubmit();

@@ -162,6 +162,40 @@ def delete_answer(aid: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+class SaveAnswerIn(BaseModel):
+    text: str
+    answer: str
+    answer_type: str = "text"
+    options: list[str] | None = None
+
+
+@router.post("/save-answer")
+def save_answer(body: SaveAnswerIn, db: Session = Depends(get_db)):
+    """Upsert a question + set the user's answer as default, so future autofill
+    (answer-for-form / lookup_default_answer) reuses it. Powers 'ask & save'."""
+    norm = normalize(body.text)
+    ans = (body.answer or "").strip()
+    if not norm or not ans:
+        raise HTTPException(400, "Question text and answer required")
+    q = db.query(Question).filter(Question.normalized == norm).first()
+    if not q:
+        q = Question(text=body.text.strip(), normalized=norm, category=classify(body.text),
+                     last_input_type=body.answer_type or "text",
+                     last_options=json.dumps(body.options) if body.options else None)
+        db.add(q); db.commit(); db.refresh(q)
+    else:
+        if body.answer_type:
+            q.last_input_type = body.answer_type
+        if body.options:
+            q.last_options = json.dumps(body.options)
+    db.query(QuestionAnswer).filter(QuestionAnswer.question_id == q.id).update({QuestionAnswer.is_default: 0})
+    a = QuestionAnswer(question_id=q.id, answer=ans, answer_type=body.answer_type or "text", is_default=1)
+    db.add(a)
+    q.last_used_at = datetime.utcnow()
+    db.commit()
+    return {"ok": True, "question_id": q.id}
+
+
 @router.post("/match")
 def match_question(body: MatchRequest, db: Session = Depends(get_db)):
     """Return saved questions most similar to the given text, with their answers."""

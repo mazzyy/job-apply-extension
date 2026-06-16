@@ -9,7 +9,7 @@
   const invoke = window.__TAURI__.core.invoke;
   const listen = window.__TAURI__.event.listen;
   const BASE = location.origin;
-  const JAA_UI_BUILD = "2026-06-16-faststart"; // shown in the log to confirm what's actually running
+  const JAA_UI_BUILD = "2026-06-16-ask-save"; // shown in the log to confirm what's actually running
 
   const SPEEDS = {
     slow:   { min: 90000, rand: 90000, label: "~90–180s between submits (safest)" },
@@ -365,7 +365,7 @@
     if (det && det.type === "easy") {
       const r = await runEval("(async()=>{ const j=window.__jaaExtractJob?window.__jaaExtractJob():null; const rr=window.__jaaRunEasyApply?await window.__jaaRunEasyApply({autoSubmit:true, applicationId:" + next.id + "}):{error:'engine not loaded'}; return Object.assign({}, rr, {job:j}); })()", 180000);
       if (isCaptcha(r)) { logLine("Security check — pausing.", "err"); await api("/applications/auto-apply/toggle", { method: "POST", body: JSON.stringify({ enabled: false }) }).catch(() => {}); await report(next, r, "failed", "Security check — paused"); return; }
-      await reportApply(next, r); return;
+      await finishExternal(next, r); return;
     }
     if (det && det.type === "direct" && types !== "easy") {
       logLine("Direct apply — opening the company site…");
@@ -375,7 +375,7 @@
       await invoke("browser_inject", { files: ["autofill.js", "greenhouse.js", "lever.js", "ashby.js", "generic.js", "generic_apply.js"] });
       const r = await runEval("(async()=>{ const j=window.__jaaExtractJob?window.__jaaExtractJob():null; const rr=window.__jaaGenericApply?await window.__jaaGenericApply({autoSubmit:true, applicationId:" + next.id + "}):{error:'engine not loaded'}; return Object.assign({}, rr, {job:j}); })()", 180000);
       if (isCaptcha(r)) { logLine("Security check — pausing.", "err"); await api("/applications/auto-apply/toggle", { method: "POST", body: JSON.stringify({ enabled: false }) }).catch(() => {}); await report(next, r, "failed", "Security check — paused"); return; }
-      await reportApply(next, r); return;
+      await finishExternal(next, r); return;
     }
     const reason = (det && det.type === "direct") ? "Direct-apply job skipped (Apply mode = Easy Apply only)" : "No apply option detected on the page";
     await report(next, {}, (det && det.type === "direct") ? "needs_review" : "failed", reason);
@@ -403,7 +403,7 @@
       await api("/applications/auto-apply/toggle", { method: "POST", body: JSON.stringify({ enabled: false }) }).catch(() => {});
       await report(next, r, "failed", "Security check — paused"); return;
     }
-    await reportApply(next, r);
+    await finishExternal(next, r);
   }
   async function reportApply(next, r) {
     const meta = { job_title: r.job ? r.job.job_title : null, company: r.job ? r.job.company : null, filled: r.filled || 0, cv_used: r.cv_used || null, answers: (r.answered || []).map((a) => ({ label: a.label, value: a.value })) };
@@ -417,6 +417,56 @@
   async function report(next, r, stat, reason) {
     const meta = { job_title: r.job ? r.job.job_title : null, company: r.job ? r.job.company : null, filled: r.filled || 0 };
     await api("/applications/" + next.id + "/auto-result", { method: "POST", body: JSON.stringify(Object.assign({}, meta, { status: stat, reason })) }).catch(() => {});
+  }
+
+  // Ask the user for fields we couldn't answer; save them to the bank; then fill + submit.
+  function promptMissing(missing) {
+    return new Promise((resolve) => {
+      const bar = document.getElementById("aa-ib-bar"); if (!bar) { resolve(null); return; }
+      const prev = document.getElementById("aa-ib-ask"); if (prev) prev.remove();
+      const card = document.createElement("div");
+      card.id = "aa-ib-ask";
+      card.style.cssText = "margin-top:10px;border-top:1px solid #eef0f5;padding-top:10px";
+      card.innerHTML =
+        '<div style="font-weight:700;font-size:13px;margin-bottom:8px">Answer to finish — saved to your bank for next time</div>' +
+        missing.map((m, i) => {
+          const id = "aa-ask-" + i;
+          let input;
+          if ((m.type === "radio" || m.type === "select") && m.options && m.options.length) {
+            input = '<select id="' + id + '" class="input" style="width:100%"><option value="">— choose —</option>' + m.options.map((o) => '<option>' + esc(o) + '</option>').join("") + '</select>';
+          } else if (m.type === "textarea") {
+            input = '<textarea id="' + id + '" class="input" rows="2" style="width:100%"></textarea>';
+          } else {
+            input = '<input id="' + id + '" class="input" style="width:100%" />';
+          }
+          return '<div style="margin-bottom:8px"><div style="font-size:12px;margin-bottom:3px">' + esc(m.label) + '</div>' + input + '</div>';
+        }).join("") +
+        '<div style="display:flex;gap:8px"><button class="btn" id="aa-ask-go">Save &amp; submit</button><button class="btn secondary" id="aa-ask-skip">Skip job</button></div>';
+      const log = document.getElementById("aa-ib-log");
+      bar.insertBefore(card, log);
+      document.getElementById("aa-ask-go").onclick = () => {
+        const answers = missing.map((m, i) => ({ label: m.label, value: (document.getElementById("aa-ask-" + i).value || "").trim(), type: m.type, options: m.options || null }));
+        card.remove(); resolve(answers);
+      };
+      document.getElementById("aa-ask-skip").onclick = () => { card.remove(); resolve(null); };
+    });
+  }
+
+  async function finishExternal(next, r) {
+    if (r && r.stopped === "needs_input" && r.missing && r.missing.length) {
+      logLine("Needs your input — " + r.missing.length + " field(s). Saving for next time.", "warn");
+      const answers = await promptMissing(r.missing);
+      if (!answers) { await report(next, r, "needs_review", "Waiting for your answers"); return; }
+      for (const a of answers) {
+        if (a.value) { try { await api("/questions/save-answer", { method: "POST", body: JSON.stringify({ text: a.label, answer: a.value, answer_type: a.type || "text", options: a.options || null }) }); } catch (e) {} }
+      }
+      const fillList = answers.filter((a) => a.value).map((a) => ({ label: a.label, value: a.value }));
+      await runEval("(async()=>{ return window.__jaaFillAnswers? await window.__jaaFillAnswers(" + JSON.stringify(fillList) + "):0; })()", 60000).catch(() => {});
+      const sr = await runEval("(async()=>{ return window.__jaaSubmitForm? await window.__jaaSubmitForm():{stopped:'submit_unconfirmed'}; })()", 120000).catch(() => ({ stopped: "submit_unconfirmed" }));
+      await reportApply(next, Object.assign({}, sr, { job: r.job }));
+      return;
+    }
+    await reportApply(next, r);
   }
   async function runHarvest(next) {
     const ad = window.JAA_pickAdapter(next.url, next.platform);
