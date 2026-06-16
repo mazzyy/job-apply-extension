@@ -22,10 +22,14 @@ fi
 
 BACKEND_DIST="$BACKEND_DIR/dist/jobapply-backend"
 
-# 1. Build the backend if needed
-if [ ! -x "$BACKEND_DIST/$BIN_NAME" ]; then
-  echo "→ Backend bundle not found at $BACKEND_DIST/$BIN_NAME"
-  echo "  Building it now (this takes 1–3 minutes the first time)…"
+# 1. Build the backend. Default: ALWAYS rebuild so the bundled binary matches the
+#    current Python + website (the dashboard is frozen INTO this bundle). Set
+#    JAA_SKIP_BACKEND_BUILD=1 to reuse an existing build (faster, but risks
+#    shipping stale backend/dashboard code).
+if [ "${JAA_SKIP_BACKEND_BUILD:-0}" = "1" ] && [ -x "$BACKEND_DIST/$BIN_NAME" ]; then
+  echo "→ JAA_SKIP_BACKEND_BUILD=1 — reusing existing backend bundle (may be stale)"
+else
+  echo "→ Rebuilding backend bundle (1–3 min) so it matches the current code…"
   (cd "$BACKEND_DIR" && bash build.sh)
 fi
 

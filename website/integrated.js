@@ -17,7 +17,7 @@
   };
   const getSpeed = () => localStorage.getItem("jaa_speed") || "normal";
 
-  let status = {}, busy = false, lastRunAt = 0, browserVisible = false, browserLoaded = false;
+  let status = {}, busy = false, lastRunAt = 0, browserVisible = false, browserLoaded = false, currentManual = null;
   const pendingRun = new Map();
   let navResolve = null;
 
@@ -37,6 +37,7 @@
     while (el.children.length > 200) el.removeChild(el.firstChild);
   }
   function setIBStatus(t) { const el = document.getElementById("aa-ib-status"); if (el) el.textContent = t || ""; }
+  function esc(s) { return (s == null ? "" : String(s)).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
   /* ---------- inject UI ---------- */
   function injectUI() {
@@ -48,6 +49,7 @@
     style.textContent = `
       #aa-ib-bar .aa-ib-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
       #aa-ib-bar .aa-ib-adv{margin-top:8px;font-size:12px;color:#6b7280}
+      #aa-ib-bar .aa-ib-tips{margin-top:8px;font-size:11px;color:#6b7280;line-height:1.5}
       #aa-ib-bar .aa-ib-adv select{margin-left:6px}
       .aa-ib-seg{display:inline-flex;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}
       .aa-ib-seg button{border:0;background:transparent;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;color:#6b7280}
@@ -61,6 +63,13 @@
       @keyframes aaspin{to{transform:rotate(360deg)}}
       .aa-ib-log{margin-top:10px;max-height:120px;overflow:auto;font:11px/1.5 ui-monospace,Menlo,monospace;color:#9aa0b5}
       .aa-ib-line.ok{color:#16a34a}.aa-ib-line.warn{color:#b45309}.aa-ib-line.err{color:#dc2626}
+      #aa-ib-manual .aa-ib-manual-h{font-weight:700;font-size:13px;margin-bottom:8px}
+      .aa-ib-mrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid #eef0f5}
+      .aa-ib-minfo{display:flex;flex-direction:column;min-width:0}
+      .aa-ib-minfo b{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:38vw}
+      .aa-ib-minfo span{font-size:11px;color:#6b7280}
+      .aa-ib-mbtns{display:flex;gap:6px;flex:0 0 auto}
+      .aa-ib-mbtns .btn{padding:5px 10px;font-size:12px}
     `;
     document.head.appendChild(style);
 
@@ -73,6 +82,7 @@
       '    <button id="aa-ib-system">System (extension)</button>' +
       '  </div>' +
       '  <div class="aa-ib-actions">' +
+      '    <button class="btn" id="aa-ib-start">Start</button>' +
       '    <button class="btn secondary" id="aa-ib-signin">Sign in to LinkedIn</button>' +
       '    <button class="btn secondary" id="aa-ib-toggleview">Show browser</button>' +
       '  </div>' +
@@ -87,11 +97,31 @@
       '    </select>' +
       '  </label>' +
       '  <span id="aa-ib-speed-note"></span>' +
+      '  <label style="margin-left:14px"><input type="checkbox" id="aa-ib-ext"> Auto-submit external portals (Greenhouse/Lever/Ashby)</label>' +
+      '</div>' +
+      '<div class="aa-ib-row aa-ib-tips">Tips: Sign in first · keep speed Normal · auto-submit covers Greenhouse/Lever/Ashby only · paste other portal links → they land in the Manual queue (Open &amp; assist) · review “needs review” before trusting results.</div>' +
+      '<div class="aa-ib-row" id="aa-ib-manualbar" style="display:none">' +
+      '  <span id="aa-ib-manualtitle" class="muted"></span>' +
+      '  <div class="aa-ib-actions">' +
+      '    <button class="btn secondary" id="aa-ib-autofill">Autofill</button>' +
+      '    <button class="btn secondary" id="aa-ib-attach">Attach CV</button>' +
+      '    <button class="btn" id="aa-ib-applied">Mark applied</button>' +
+      '    <button class="btn secondary" id="aa-ib-skip">Skip</button>' +
+      '  </div>' +
       '</div>' +
       '<div id="aa-ib-host" class="aa-ib-host"></div>' +
       '<div id="aa-ib-log" class="aa-ib-log"></div>';
     if (head && head.nextSibling) head.parentNode.insertBefore(bar, head.nextSibling);
     else tab.insertBefore(bar, tab.firstChild);
+
+    const mcard = document.createElement("div");
+    mcard.className = "card"; mcard.id = "aa-ib-manual"; mcard.style.display = "none";
+    bar.after(mcard);
+
+    document.getElementById("aa-ib-autofill").onclick = runAutofill;
+    document.getElementById("aa-ib-attach").onclick = attachCV;
+    document.getElementById("aa-ib-applied").onclick = () => { if (currentManual) manualResult(currentManual, "applied"); };
+    document.getElementById("aa-ib-skip").onclick = () => { if (currentManual) manualResult(currentManual, "skipped"); };
 
     document.getElementById("aa-ib-integrated").onclick = () => setMode("integrated");
     document.getElementById("aa-ib-system").onclick = () => setMode("system");
@@ -101,11 +131,17 @@
       await navigate("https://www.linkedin.com/login").catch((e) => logLine(String(e), "err"));
     };
     document.getElementById("aa-ib-toggleview").onclick = () => (browserVisible ? hideBrowser() : showBrowser());
+    document.getElementById("aa-ib-start").onclick = toggleEnabled;
 
     const sp = document.getElementById("aa-ib-speed");
     sp.value = getSpeed();
     sp.onchange = () => { localStorage.setItem("jaa_speed", sp.value); updateSpeedNote(); };
     updateSpeedNote();
+    const ext = document.getElementById("aa-ib-ext");
+    ext.onchange = async () => {
+      try { await api("/settings/", { method: "PUT", body: JSON.stringify({ auto_apply_external: ext.checked }) }); logLine(ext.checked ? "External auto-submit ON — Greenhouse/Lever/Ashby will be applied & submitted automatically." : "External auto-submit OFF.", ext.checked ? "warn" : ""); await refresh(); }
+      catch (e) { logLine(e.message, "err"); }
+    };
     return true;
   }
   function updateSpeedNote() { const n = document.getElementById("aa-ib-speed-note"); if (n) n.textContent = (SPEEDS[getSpeed()] || SPEEDS.normal).label; }
@@ -160,12 +196,127 @@
     try { await api("/settings/", { method: "PUT", body: JSON.stringify({ browser_mode: m }) }); await refresh(); logLine("Mode → " + m); }
     catch (e) { logLine(e.message, "err"); }
   }
+  async function toggleEnabled() {
+    try {
+      const cap = +((document.getElementById("aa-cap") || {}).value) || 15;
+      const mode = ((document.getElementById("aa-mode") || {}).value) || "session";
+      const portal = ((document.getElementById("aa-portal-submit") || {}).value) === "1";
+      await api("/applications/auto-apply/toggle", { method: "POST", body: JSON.stringify({ enabled: !status.enabled, daily_cap: cap, mode, portal_auto_submit: portal }) });
+      await refresh();
+      logLine(status.enabled ? "Auto-apply started." : "Auto-apply stopped.");
+    } catch (e) { logLine(e.message, "err"); }
+  }
+  // Explain, in plain words, why nothing is applying right now.
+  function idleReason() {
+    const mode = status.browser_mode || "system";
+    if (mode !== "integrated") return "System mode — the extension applies (not the in-app browser)";
+    if (!status.enabled) return "Auto-apply is OFF — press Start";
+    if (status.cap_reached) return "Daily cap reached (" + (status.daily_cap || "?") + ")";
+    if (!status.next) return "No jobs queued — add jobs above, then Start";
+    if (busy) return "Working…";
+    const sp = SPEEDS[getSpeed()] || SPEEDS.normal;
+    const minGap = (status.next.task === "harvest" || status.next.task === "session") ? 8000 : sp.min;
+    const wait = lastRunAt ? Math.max(0, minGap - (Date.now() - lastRunAt)) : 0;
+    if (wait > 1500) return "Next " + status.next.task + " in ~" + Math.ceil(wait / 1000) + "s";
+    return "Ready · next: " + status.next.task;
+  }
   async function refresh() {
-    try { status = await api("/applications/auto-apply/status"); } catch { return; }
+    try { status = await api("/applications/auto-apply/status"); } catch { setIBStatus("Backend offline"); return; }
     const mode = status.browser_mode || "system";
     const i = document.getElementById("aa-ib-integrated"), s = document.getElementById("aa-ib-system");
     if (i && s) { i.classList.toggle("active", mode === "integrated"); s.classList.toggle("active", mode === "system"); }
-    setIBStatus(mode === "integrated" ? (status.enabled ? "Integrated · running" : "Integrated · idle") : "System · the extension drives auto-apply");
+    const startBtn = document.getElementById("aa-ib-start");
+    if (startBtn) { startBtn.textContent = status.enabled ? "Stop" : "Start"; startBtn.className = status.enabled ? "btn secondary" : "btn"; }
+    const ext = document.getElementById("aa-ib-ext"); if (ext) ext.checked = !!status.auto_apply_external;
+    if (!busy) setIBStatus(idleReason());
+  }
+  // Route "Open job in browser" links to the internal browser when in integrated mode.
+  async function onDocClick(e) {
+    const el = e.target.closest && e.target.closest("[data-ext]"); if (!el) return;
+    if ((status.browser_mode || "system") !== "integrated") return;
+    const url = el.getAttribute("data-ext") || "";
+    if (!/^https?:\/\//i.test(url)) return;
+    // Keep genuine utility links (account pages, docs) in the external browser.
+    if (/(myaccount|accounts)\.google\.com|\.microsoft\.com|\/\/support\.|\/\/docs\./i.test(url)) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    logLine("Opening job in the integrated browser…");
+    await showBrowser();
+    await navigate(url);
+  }
+
+  /* ---------- manual apply (assisted) ---------- */
+  async function runAutofill() {
+    const af = await runEval("(async()=>{ return window.JAA_Autofill ? await window.JAA_Autofill.fillAll() : {filled:0}; })()", 60000).catch(() => null);
+    if (af) logLine("Autofilled " + (af.filled || 0) + " field(s)", "ok");
+  }
+  async function attachCV() {
+    const r = await runEval(
+      "(async()=>{" +
+      " const inputs=[...document.querySelectorAll('input[type=file]')].filter(i=>!i.disabled && i.offsetParent!==null);" +
+      " if(!inputs.length) return {attached:0, reason:'no file field on page'};" +
+      " const job = window.__jaaExtractJob ? (window.__jaaExtractJob()||{}) : {};" +
+      " let cv; try{ cv = await window.__jaaApi('/cvs/best',{method:'POST',body:JSON.stringify({job_description: job.job_description||''})}); }catch(e){ return {attached:0, reason:'best:'+e.message}; }" +
+      " if(!cv||!cv.id) return {attached:0, reason:'no cv'};" +
+      " let blob; try{ const resp=await fetch(window.__JAA_API_BASE+'/cvs/'+cv.id+'/file'); blob=await resp.blob(); }catch(e){ return {attached:0, reason:'dl:'+e.message}; }" +
+      " const file=new File([blob], cv.filename||'cv.pdf', {type: blob.type||'application/pdf'});" +
+      " let n=0; for(const inp of inputs){ try{ const dt=new DataTransfer(); dt.items.add(file); inp.files=dt.files; inp.dispatchEvent(new Event('change',{bubbles:true})); inp.dispatchEvent(new Event('input',{bubbles:true})); n++; }catch(e){} }" +
+      " return {attached:n, cv:cv.label};" +
+      "})()", 60000).catch((e) => ({ attached: 0, reason: String(e) }));
+    if (r && r.attached) logLine('Attached CV "' + (r.cv || "") + '" to ' + r.attached + " field(s)", "ok");
+    else logLine("CV not attached" + (r && r.reason ? " (" + r.reason + ")" : ""), "warn");
+  }
+  function showManualBar(on) {
+    const b = document.getElementById("aa-ib-manualbar"); if (b) b.style.display = on ? "" : "none";
+    const t = document.getElementById("aa-ib-manualtitle");
+    if (t) t.textContent = on && currentManual ? "Manual: " + (currentManual.job_title || currentManual.url || "") : "";
+  }
+  async function openManual(job) {
+    currentManual = job;
+    logLine("Manual: opening " + (job.job_title || job.url));
+    await showBrowser();
+    await navigate(job.url);
+    await sleep(2500);
+    const ad = window.JAA_pickAdapter(job.url, job.platform);
+    await invoke("browser_inject", { files: ad.files.concat(["question_suggest.js"]) });
+    await runAutofill();
+    await attachCV();
+    showManualBar(true);
+    logLine("Review the form (✦ Suggest answer on questions), then click Mark applied.", "warn");
+  }
+  async function manualResult(job, statusVal) {
+    try {
+      await api("/applications/" + job.id + "/manual-result", { method: "POST", body: JSON.stringify({ status: statusVal }) });
+      logLine((statusVal === "applied" ? "Marked applied: " : "Skipped: ") + (job.job_title || job.url), statusVal === "applied" ? "ok" : "warn");
+      if (currentManual && currentManual.id === job.id) { currentManual = null; showManualBar(false); }
+      loadManual();
+    } catch (e) { logLine(e.message, "err"); }
+  }
+  async function loadManual() {
+    let rows = [];
+    try { rows = await api("/applications/manual-queue"); } catch { return; }
+    const card = document.getElementById("aa-ib-manual"); if (!card) return;
+    if (!rows.length) { card.style.display = "none"; card.innerHTML = ""; return; }
+    card.style.display = "";
+    const hasATS = rows.some((r) => ["greenhouse", "lever", "ashby"].indexOf(r.platform) >= 0);
+    const tip = (hasATS && !status.auto_apply_external)
+      ? ' <span style="font-weight:400;color:#b45309">· tip: turn on “Auto-submit external portals” + Start to auto-apply these</span>'
+      : "";
+    card.innerHTML = '<div class="aa-ib-manual-h">Manual queue (' + rows.length + ') — external portals & forms you submit yourself' + tip + '</div>' +
+      rows.map((r) => {
+        const t = esc(r.job_title || r.url || "Job");
+        const sub = esc([r.company, r.platform, r.status].filter(Boolean).join(" · "));
+        return '<div class="aa-ib-mrow" data-id="' + r.id + '">' +
+          '<div class="aa-ib-minfo"><b>' + t + '</b><span>' + sub + '</span></div>' +
+          '<div class="aa-ib-mbtns"><button class="btn open">Open &amp; assist</button>' +
+          '<button class="btn secondary applied">Applied</button>' +
+          '<button class="btn secondary skip">Skip</button></div></div>';
+      }).join("");
+    rows.forEach((r) => {
+      const row = card.querySelector('.aa-ib-mrow[data-id="' + r.id + '"]'); if (!row) return;
+      row.querySelector(".open").onclick = () => openManual(r);
+      row.querySelector(".applied").onclick = () => manualResult(r, "applied");
+      row.querySelector(".skip").onclick = () => manualResult(r, "skipped");
+    });
   }
 
   /* ---------- browser-pane control ---------- */
@@ -290,10 +441,13 @@
     });
     await listen("jaa-run-finished", (e) => { const p = e.payload || {}; const f = pendingRun.get(p.nonce); if (f) { pendingRun.delete(p.nonce); f(p); } });
     await listen("jaa-progress", (e) => { const p = e.payload || {}; setIBStatus("Step " + (p.step || "") + " · " + (p.filled || 0) + " filled"); });
+    document.addEventListener("click", onDocClick, true);   // capture, so we beat the external-link handler
     await refresh();
     heartbeat();
+    loadManual();
     setInterval(tick, 4000);
     setInterval(heartbeat, 15000);
+    setInterval(loadManual, 8000);
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);

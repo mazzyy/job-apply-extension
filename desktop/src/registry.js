@@ -34,9 +34,9 @@ window.JAA_ADAPTERS = [
     harvest: "__jaaSFHarvest",
     mode: "auto",
   },
-  { id: "greenhouse", match: /greenhouse\.io/i, files: ["autofill.js", "greenhouse.js"], autofill: true, mode: "manual" },
-  { id: "lever",      match: /lever\.co/i,      files: ["autofill.js", "lever.js"],      autofill: true, mode: "manual" },
-  { id: "ashby",      match: /ashbyhq\.com/i,   files: ["autofill.js", "ashby.js"],      autofill: true, mode: "manual" },
+  { id: "greenhouse", match: /greenhouse\.io/i, files: ["autofill.js", "greenhouse.js", "generic_apply.js"], apply: "__jaaGenericApply", mode: "auto" },
+  { id: "lever",      match: /lever\.co/i,      files: ["autofill.js", "lever.js", "generic_apply.js"],      apply: "__jaaGenericApply", mode: "auto" },
+  { id: "ashby",      match: /ashbyhq\.com/i,   files: ["autofill.js", "ashby.js", "generic_apply.js"],      apply: "__jaaGenericApply", mode: "auto" },
 
   // Example of a future portal — uncomment + ship puma.js (or just reuse autofill):
   // { id: "puma", match: /puma\.[a-z0-9-]+\.(com|io)/i, files: ["autofill.js", "puma.js"], autofill: true, mode: "manual" },

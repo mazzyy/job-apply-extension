@@ -9,6 +9,9 @@ from ..config import settings
 from ..models import CV, Profile
 from ..services.cv_parser import extract_text
 from ..services.analyzer import structure_cv
+from ..services.cv_match import pick_best_cv
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/cvs", tags=["cvs"])
 
@@ -130,3 +133,32 @@ def get_active(db: Session = Depends(get_db)):
         "raw_text": cv.raw_text,
         "structured": json.loads(cv.structured or "{}"),
     }
+
+
+@router.get("/{cv_id}/file")
+def cv_file(cv_id: int, db: Session = Depends(get_db)):
+    """Raw CV file — used by the integrated browser to attach it to a form."""
+    cv = db.query(CV).filter(CV.id == cv_id).first()
+    if not cv or not (cv.file_path and os.path.exists(cv.file_path)):
+        raise HTTPException(404, "CV file not found")
+    return FileResponse(cv.file_path, filename=cv.filename or "cv.pdf")
+
+
+class BestCVIn(BaseModel):
+    job_description: str | None = None
+
+
+@router.post("/best")
+def best_cv(body: BestCVIn, db: Session = Depends(get_db)):
+    """Pick the best-matching CV for a job description (keyword overlap, no LLM).
+    Falls back to the active CV when there's no JD/match."""
+    cvs = db.query(CV).all()
+    if not cvs:
+        raise HTTPException(404, "No CV uploaded yet")
+    jd = (body.job_description or "").strip()
+    best = None
+    if jd:
+        best, _ = pick_best_cv(cvs, jd)
+    if not best:
+        best = next((c for c in cvs if c.is_active), None) or cvs[0]
+    return {"id": best.id, "label": best.label, "filename": best.filename}

@@ -45,4 +45,7 @@ class AppSettings(Base):
     #   "integrated" = the in-app embedded browser drives it (desktop app)
     browser_mode = Column(String(20), default="system")
 
+    # Fully auto-submit external ATS portals (Greenhouse / Lever / Ashby)
+    auto_apply_external = Column(Integer, default=0)
+
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

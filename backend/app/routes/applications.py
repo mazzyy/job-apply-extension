@@ -250,12 +250,28 @@ def _is_sf(low: str) -> bool:
     return any(h in low for h in _SF_HOST)
 
 
+def _manual_platform(low: str) -> str:
+    if "greenhouse.io" in low: return "greenhouse"
+    if "lever.co" in low: return "lever"
+    if "ashbyhq.com" in low: return "ashby"
+    if "myworkdayjobs.com" in low or "workday" in low: return "workday"
+    return "manual"
+
+
 def _classify_queue_entry(entry: str, time_range: str = "any"):
     """Returns (url, task, label, platform). task is 'apply' or 'harvest'."""
     e = entry.strip()
     if not e:
         return None
     low = e.lower()
+    # Recognize URLs pasted WITHOUT a scheme (e.g. "boards.greenhouse.io/acme/123",
+    # "www.company.com/jobs", "aplitrak.com/?adid=…") so a real job link is never
+    # mistaken for a keyword search.
+    if not low.startswith("http") and (
+        low.startswith("www.") or (" " not in low and "/" in low and "." in low)
+    ):
+        e = "https://" + e
+        low = e.lower()
     if low.startswith("http"):
         if _is_sf(low):
             # SF job detail vs. a search/results listing
@@ -267,7 +283,8 @@ def _classify_queue_entry(entry: str, time_range: str = "any"):
                 return (e, "apply", None, "linkedin")
             label = "Search: " + e.split("keywords=")[-1].split("&")[0][:40] if "keywords=" in low else "LinkedIn search"
             return (e, "harvest", label, "linkedin")
-        return None
+        # Any other career-site URL → a MANUAL job (we assist, you submit).
+        return (e, "manual", None, _manual_platform(low))
     # Plain text → LinkedIn Easy-Apply keyword search with the chosen date filter
     return (_build_search_url(e, time_range), "harvest", f'Search: "{e}"', "linkedin")
 
@@ -284,8 +301,8 @@ def queue_jobs(body: QueueIn, db: Session = Depends(get_db)):
             skipped += 1
             continue
         url, task, label, platform = c
-        status = "queued_search" if task == "harvest" else "queued"
-        if task == "apply":
+        status = "queued_search" if task == "harvest" else ("queued_manual" if task == "manual" else "queued")
+        if task in ("apply", "manual"):
             base_url = url.split("?")[0].rstrip("/")
             exists = db.query(Application).filter(Application.url.like(base_url + "%")).first()
             if exists and exists.status in ("queued", "applied"):
@@ -310,6 +327,7 @@ def auto_apply_status(db: Session = Depends(get_db)):
     searches = db.query(Application).filter(Application.status == "queued_search").count()
     cap = row.auto_apply_daily_cap or 15
     enabled = bool(row.auto_apply_enabled)
+    _ext_on = bool(getattr(row, "auto_apply_external", 0))
 
     mode = (row.auto_apply_mode or "session")
     nxt = None
@@ -327,6 +345,12 @@ def auto_apply_status(db: Session = Depends(get_db)):
             nxt = {"id": srow.id, "url": srow.url, "task": "harvest", "platform": _plat(srow)}
         elif arow and applied_today < cap:
             nxt = {"id": arow.id, "url": arow.url, "task": "apply", "platform": _plat(arow)}
+        elif _ext_on and applied_today < cap:
+            mrows = (db.query(Application).filter(Application.status == "queued_manual")
+                     .order_by(Application.id.asc()).all())
+            mrow = next((m for m in mrows if _plat(m) in ("greenhouse", "lever", "ashby")), None)
+            if mrow:
+                nxt = {"id": mrow.id, "url": mrow.url, "task": "apply", "platform": _plat(mrow)}
     li_queued = sum(1 for a in db.query(Application).filter(Application.status.in_(("queued","queued_search"))).all()
                     if _platform_of(a) == "linkedin")
     sf_queued = queued + searches - li_queued
@@ -343,6 +367,7 @@ def auto_apply_status(db: Session = Depends(get_db)):
         "mode": mode,
         "portal_auto_submit": bool(row.portal_auto_submit),
         "browser_mode": (row.browser_mode or "system"),
+        "auto_apply_external": _ext_on,
         "next": nxt,
         "worker_online": _wstat["online"],
         "worker_age_sec": _wstat["age_sec"],
@@ -492,6 +517,43 @@ def _platform_of(a) -> str:
     if a.url and "successfactors" in (a.url or "").lower():
         return "successfactors"
     return "linkedin"
+
+
+@router.get("/manual-queue")
+def manual_queue(db: Session = Depends(get_db)):
+    """Jobs that need a human to finish & submit: external portals (queued_manual)
+    plus anything auto-apply flagged as needs_review."""
+    rows = (db.query(Application)
+            .filter(Application.status.in_(("queued_manual", "needs_review")))
+            .order_by(Application.id.asc()).all())
+    return [{
+        "id": a.id, "url": a.url, "job_title": a.job_title, "company": a.company,
+        "platform": _platform_of(a), "status": a.status,
+    } for a in rows]
+
+
+class ManualResultIn(BaseModel):
+    status: str = "applied"        # applied | skipped
+    job_title: str | None = None
+    company: str | None = None
+
+
+@router.post("/{app_id}/manual-result")
+def manual_result(app_id: int, body: ManualResultIn, db: Session = Depends(get_db)):
+    a = db.query(Application).filter(Application.id == app_id).first()
+    if not a:
+        raise HTTPException(404, "Application not found")
+    if body.job_title: a.job_title = body.job_title
+    if body.company: a.company = body.company
+    a.status = "applied" if body.status == "applied" else "skipped"
+    ev = ApplicationEvent(
+        application_id=a.id,
+        kind="applied" if a.status == "applied" else "skipped",
+        title="Applied manually" if a.status == "applied" else "Skipped",
+        source="manual",
+    )
+    db.add(ev); db.commit()
+    return {"ok": True, "status": a.status}
 
 
 @router.get("/auto-apply/log")

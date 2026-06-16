@@ -19,6 +19,7 @@ class SettingsIn(BaseModel):
     azure_deployment: str | None = None
     azure_api_version: str | None = None
     browser_mode: str | None = None       # system | integrated
+    auto_apply_external: bool | None = None
 
 
 @router.get("/")
@@ -45,6 +46,8 @@ def update_settings(body: SettingsIn, db: Session = Depends(get_db)):
         row.per_task = json.dumps(data["per_task"])
     if "browser_mode" in data and data["browser_mode"] in {"system", "integrated"}:
         row.browser_mode = data["browser_mode"]
+    if "auto_apply_external" in data and data["auto_apply_external"] is not None:
+        row.auto_apply_external = 1 if data["auto_apply_external"] else 0
     # Azure credentials — treat empty string as "do not change", explicit None as clear,
     # and any other value as set. This avoids the UI accidentally clearing the saved key
     # when the user just toggles other settings.
@@ -76,6 +79,7 @@ def _to_dict(row: AppSettings) -> dict:
         "local_model": row.local_model,
         "local_base_url": row.local_base_url,
         "browser_mode": getattr(row, "browser_mode", None) or "system",
+        "auto_apply_external": bool(getattr(row, "auto_apply_external", 0)),
         "per_task": json.loads(row.per_task) if row.per_task else {},
         # Mask the key — show only whether it's set and the last 4 chars for verification
         "azure_api_key_set": bool(key),

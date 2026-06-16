@@ -544,43 +544,76 @@
     return results;
   }
 
+  // The visible text of a single radio OPTION (e.g. "Yes"), not the question.
+  function radioOptionText(r) {
+    if (r.id) {
+      const l = document.querySelector(`label[for="${CSS.escape(r.id)}"]`);
+      if (l && l.innerText.trim()) return l.innerText.trim();
+    }
+    const lab = r.closest("label");
+    if (lab && lab.innerText.trim()) return lab.innerText.trim();
+    return (r.value || r.getAttribute("aria-label") || "").trim();
+  }
+
+  // For diversity / EEO questions, prefer a neutral "decline" option over guessing.
+  function eeoDecline(radios) {
+    return radios.find(r => /decline|prefer not|not (to )?(say|disclose|answer)|don'?t wish/i.test(radioOptionText(r)));
+  }
+
   async function fillRadioGroups(modal, ctx) {
-    // Each fieldset / radio group: find the group label and pick a sensible option
+    // Group radios by `name` (fallback to fieldset legend / label).
     const groups = new Map();
     $all("input[type='radio']", modal).filter(visible).forEach(r => {
-      const groupName = r.name || r.closest("fieldset")?.querySelector("legend")?.innerText || "";
-      const key = groupName || labelOf(r);
+      const key = r.name || r.closest("fieldset")?.querySelector("legend")?.innerText || labelOf(r) || "";
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(r);
     });
 
-    let filled = 0;
+    const out = { filled: 0, answered: [], required_blank: [] };
     for (const [name, radios] of groups) {
-      if (radios.some(r => r.checked)) continue;   // already answered
+      if (radios.some(r => r.checked)) continue;                 // already answered
       const wrap = radios[0].closest("fieldset, [class*='form-element']");
-      const label = (wrap?.querySelector("legend, label, [class*='label']")?.innerText || name || "").trim();
-      let pick = null;
+      const legend = wrap?.querySelector("legend, [class*='label'], [class*='question']");
+      const label = ((legend?.innerText || name || "").trim().split("\n")[0] || "").trim();
+      if (/resume|^cv\b|lebenslauf/i.test(label + " " + name)) continue;   // resume handled elsewhere
+      const opts = radios.map(radioOptionText).filter(Boolean);
+      const required = (wrap && /\*|required|erforderlich|pflicht/i.test(wrap.innerText || ""))
+        || radios.some(r => r.required || r.getAttribute("aria-required") === "true");
 
-      // Yes/No: try profile + question library + heuristic
-      if (looksLikeYesNo(label)) {
-        let want = preferYes(label);
-        if (!want) {
-          const saved = await matchQuestion(label);
-          if (saved) want = /^yes/i.test(saved.trim()) ? "Yes" : (/^no/i.test(saved.trim()) ? "No" : null);
-        }
-        if (want) pick = radios.find(r => {
-          const labText = labelOf(r).toLowerCase();
-          return labText === want.toLowerCase() || labText.startsWith(want.toLowerCase());
-        });
+      // Diversity / EEO — don't guess: decline if possible, else leave for review.
+      if (/gender|\bsex\b|race|ethnic|hispanic|latino|veteran|disab|sexual orientation|lgbt|pronoun/i.test(label)) {
+        const dec = eeoDecline(radios);
+        if (dec) { dec.click(); dec.dispatchEvent(new Event("change", { bubbles: true })); out.filled++; out.answered.push({ label, value: radioOptionText(dec), needs_review: true }); }
+        else if (required) out.required_blank.push(label.slice(0, 80));
+        continue;
       }
+
+      // Resolve a value: fast heuristic -> saved answer bank -> LLM (with the real options).
+      let want = preferYes(label), needsReview = false, qid = null;
+      if (!want) { const saved = await matchQuestion(label); if (saved) want = saved; }
+      if (!want) {
+        const ans = await typedAnswer({ text: label, inputType: "radio", options: opts, applicationId: ctx.applicationId });
+        if (ans && ans.value != null && String(ans.value).length) { want = String(ans.value); needsReview = !!ans.needs_review; qid = ans.question_id; }
+      }
+      if (!want) { if (required) out.required_blank.push(label.slice(0, 80)); continue; }
+
+      // Match the chosen value to one of the radio options.
+      const wl = want.toLowerCase();
+      const pick =
+        radios.find(r => radioOptionText(r).toLowerCase() === wl) ||
+        radios.find(r => { const t = radioOptionText(r).toLowerCase(); return t && (t.startsWith(wl) || wl.startsWith(t)); }) ||
+        radios.find(r => { const t = radioOptionText(r).toLowerCase(); return t && (t.includes(wl) || wl.includes(t)); });
 
       if (pick) {
         pick.click();
         pick.dispatchEvent(new Event("change", { bubbles: true }));
-        filled++;
+        out.filled++;
+        out.answered.push({ label, value: radioOptionText(pick) || want, needs_review: needsReview, qid });
+      } else if (required) {
+        out.required_blank.push(label.slice(0, 80));
       }
     }
-    return filled;
+    return out;
   }
 
   async function pickFirstResume(modal) {
@@ -908,9 +941,11 @@
       result.filled += fr.filled;
       result.api_errors += (fr.api_errors || 0);
       result.answered = (result.answered || []).concat(fr.answered || []);
-      // Fill radio groups
-      const rfilled = await fillRadioGroups(modal, ctx);
-      result.filled += rfilled;
+      // Fill radio groups (Yes/No + multi-option + EEO), with LLM fallback
+      const rr = await fillRadioGroups(modal, ctx);
+      result.filled += rr.filled;
+      result.answered = (result.answered || []).concat(rr.answered || []);
+      if (rr.required_blank.length) result.blanks.push(...rr.required_blank);
       // Tick required consent checkboxes (never marketing opt-ins)
       result.filled += tickRequiredCheckboxes(modal);
       reportProgress(step + 1, result.filled, heading);
