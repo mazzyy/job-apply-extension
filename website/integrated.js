@@ -9,7 +9,7 @@
   const invoke = window.__TAURI__.core.invoke;
   const listen = window.__TAURI__.event.listen;
   const BASE = location.origin;
-  const JAA_UI_BUILD = "2026-06-16-ask-save"; // shown in the log to confirm what's actually running
+  const JAA_UI_BUILD = "2026-06-16-calendar"; // shown in the log to confirm what's actually running
 
   const SPEEDS = {
     slow:   { min: 90000, rand: 90000, label: "~90–180s between submits (safest)" },
@@ -222,7 +222,7 @@
     if (!status.next) return "No jobs queued — add jobs above, then Start";
     if (busy) return "Working…";
     const sp = SPEEDS[getSpeed()] || SPEEDS.normal;
-    const minGap = (status.next.task === "harvest" || status.next.task === "session") ? 8000 : sp.min;
+    const minGap = (status.next.task === "harvest" || status.next.task === "session") ? 8000 : ((status.next.platform || "") === "linkedin" ? sp.min : 5000);
     const wait = lastRunAt ? Math.max(0, minGap - (Date.now() - lastRunAt)) : 0;
     if (wait > 1500) return "Next " + status.next.task + " in ~" + Math.ceil(wait / 1000) + "s";
     return "Ready · next: " + status.next.task;
@@ -245,7 +245,7 @@
     const url = el.getAttribute("data-ext") || "";
     if (!/^https?:\/\//i.test(url)) return;
     // Keep genuine utility links (account pages, docs) in the external browser.
-    if (/(myaccount|accounts)\.google\.com|\.microsoft\.com|\/\/support\.|\/\/docs\./i.test(url)) return;
+    if (/(myaccount|accounts|calendar)\.google\.com|\.microsoft\.com|\/\/support\.|\/\/docs\./i.test(url)) return;
     e.preventDefault(); e.stopImmediatePropagation();
     logLine("Opening job in the integrated browser…");
     await showBrowser();
@@ -410,7 +410,7 @@
     let stat = "failed", reason = r.error || r.stopped || "unknown";
     if (r.stopped === "submitted") { stat = "applied"; reason = null; }
     else if (r.stopped === "submit_unconfirmed") { stat = "applied"; reason = "submitted (confirmation not detected — verify)"; }
-    else if (["needs_review", "required_field_blank", "validation_error", "ready_to_submit", "needs_account"].indexOf(r.stopped) >= 0) { stat = "needs_review"; reason = r.reason || r.stopped; }
+    else if (["needs_review", "required_field_blank", "validation_error", "ready_to_submit", "needs_account", "needs_input"].indexOf(r.stopped) >= 0) { stat = "needs_review"; reason = r.reason || r.stopped; }
     await api("/applications/" + next.id + "/auto-result", { method: "POST", body: JSON.stringify(Object.assign({}, meta, { status: stat, reason })) });
     logLine("→ " + stat + (reason ? " (" + reason + ")" : "") + " · " + meta.filled + " fields", stat === "applied" ? "ok" : stat === "needs_review" ? "warn" : "err");
   }
@@ -504,7 +504,10 @@
     const next = status.next;
     if (next.task === "apply" && status.cap_reached) return;
     const sp = SPEEDS[getSpeed()] || SPEEDS.normal;
-    const minGap = next.task === "harvest" ? 8000 : next.task === "session" ? 8000 : sp.min + Math.floor(Math.random() * sp.rand);
+    const isLI = (next.platform || "") === "linkedin";
+    const minGap = (next.task === "harvest" || next.task === "session") ? 8000
+      : isLI ? sp.min + Math.floor(Math.random() * sp.rand)   // human pacing only for LinkedIn
+      : 5000;                                                  // portals: no anti-detection throttle
     if (lastRunAt && Date.now() - lastRunAt < minGap) return;
     busy = true;
     try {
@@ -532,7 +535,7 @@
       if (browserVisible) revealBrowser();
     });
     await listen("jaa-run-finished", (e) => { const p = e.payload || {}; const f = pendingRun.get(p.nonce); if (f) { pendingRun.delete(p.nonce); f(p); } });
-    await listen("jaa-progress", (e) => { const p = e.payload || {}; setIBStatus("Step " + (p.step || "") + " · " + (p.filled || 0) + " filled"); });
+    await listen("jaa-progress", (e) => { const p = e.payload || {}; if (p.note) logLine(p.note); else setIBStatus("Step " + (p.step || "") + " · " + (p.filled || 0) + " filled"); });
     document.addEventListener("click", onDocClick, true);   // capture, so we beat the external-link handler
     await refresh();
     if (status && status.build) logLine(status.build === JAA_UI_BUILD ? "Backend build " + status.build + " ✓ (matches UI)" : "⚠ Backend build " + status.build + " ≠ UI " + JAA_UI_BUILD + " — restart backend / rebuild.", status.build === JAA_UI_BUILD ? "ok" : "warn");

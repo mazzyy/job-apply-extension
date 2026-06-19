@@ -52,6 +52,7 @@ pub fn run() {
             browser::browser_navigate,
             browser::browser_eval,
             browser::browser_inject,
+            browser::backend_call,
         ])
         .setup(|app| {
             // Resolve the writable data directory (set via env so the backend picks it up)

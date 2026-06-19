@@ -39,9 +39,18 @@
   /* ---- backend fetch helper ---- */
   function api(path, opts) {
     opts = opts || {};
+    var method = opts.method || "GET";
+    var body = (opts.body !== undefined && opts.body !== null) ? opts.body : null;
+    // Prefer the Rust proxy so the job site's CSP can't block backend calls.
+    try {
+      if (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke) {
+        return window.__TAURI__.core.invoke("backend_call", { method: method, path: path, body: body })
+          .then(function (text) { var d; try { d = JSON.parse(text); } catch (e) { d = { raw: text }; } return d; });
+      }
+    } catch (e) {}
     var headers = { "Content-Type": "application/json", "X-JAA-Client": "desktop-browser" };
     if (opts.headers) for (var k in opts.headers) headers[k] = opts.headers[k];
-    return fetch(API_BASE + path, { method: opts.method || "GET", headers: headers, body: opts.body })
+    return fetch(API_BASE + path, { method: method, headers: headers, body: body })
       .then(function (r) {
         return r.text().then(function (t) {
           var d; try { d = JSON.parse(t); } catch (e) { d = { raw: t }; }

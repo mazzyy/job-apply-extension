@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-browser-backend"
+description = "Let the integrated browser pane reach the local backend through Rust (bypasses job-site CSP)."
+commands.allow = ["backend_call"]

@@ -140,6 +140,15 @@ def apply_classification(db: Session, app_row: Application | None, info: dict,
     emit(db, app_row.id, kind=kind_map.get(info.get("kind", ""), "email_received"),
          title=info.get("summary") or "Email received",
          detail=raw_text[:2000], source="email", commit=False)
+    idt = info.get("interview_datetime")
+    if idt and isinstance(idt, str):
+        try:
+            import re as _re
+            from datetime import datetime as _d
+            s = _re.sub(r"[+-]\d{2}:?\d{2}$", "", idt.strip().replace("Z", "")).strip()
+            app_row.interview_at = _d.fromisoformat(s)
+        except Exception:
+            pass
     db.commit()
     return True, status_changed
 

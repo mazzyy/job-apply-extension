@@ -166,9 +166,75 @@ function renderApps(){
       <td>${new Date(a.created_at).toLocaleDateString()}</td>
     </tr>`).join("");
   $all("#apps-body tr").forEach(tr => tr.addEventListener("click", () => openApp(+tr.dataset.id)));
+  renderBoard();
 }
 $("#filter-search").addEventListener("input", renderApps);
 $("#filter-status").addEventListener("change", renderApps);
+
+const BOARD_COLS = [
+  { label: "Applied",             match: (a) => a.status === "applied" },
+  { label: "Waiting for response", match: (a) => a.status === "analyzed" },
+  { label: "Interview",           match: (a) => a.status === "interview" },
+  { label: "Offer",               match: (a) => a.status === "offer" },
+  { label: "Rejected",            match: (a) => a.status === "rejected" },
+];
+function renderBoard(){
+  const host = $("#apps-board"); if (!host) return;
+  const apps = window.__apps || [];
+  host.innerHTML = BOARD_COLS.map(col => {
+    const items = apps.filter(col.match);
+    return `<div class="board-col"><div class="board-col-h">${col.label}<span class="board-count">${items.length}</span></div>
+      <div class="board-cards">${items.map(a => `
+        <div class="board-card" data-id="${a.id}">
+          <div class="board-card-title">${esc(a.job_title||"—")}</div>
+          <div class="board-card-sub">${esc(a.company||"")}</div>
+          ${a.interview_at ? `<div class="board-card-date">📅 ${new Date(a.interview_at).toLocaleString([], {dateStyle:"medium", timeStyle:"short"})}</div>` : ""}
+        </div>`).join("") || `<div class="board-empty">—</div>`}</div></div>`;
+  }).join("");
+  host.querySelectorAll(".board-card").forEach(c => c.addEventListener("click", () => openApp(+c.dataset.id)));
+}
+
+function toLocalInput(iso){ try{ const d=new Date(iso); return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}catch(e){return "";} }
+function gcalUrl(a){
+  if (!a.interview_at) return "#";
+  const start = new Date(a.interview_at), end = new Date(start.getTime()+3600000);
+  const fmt = (d)=> d.toISOString().replace(/[-:]/g,"").split(".")[0]+"Z";
+  const text = encodeURIComponent("Interview: " + (a.job_title||"") + (a.company? " @ "+a.company : ""));
+  const details = encodeURIComponent((a.url||"") + "\n\nvia Job Apply Assistant");
+  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${fmt(start)}/${fmt(end)}&details=${details}`;
+}
+async function loadCalendar(){
+  let rows = []; try { rows = await API.get("/applications/calendar"); } catch {}
+  const now = Date.now();
+  const sorted = rows.slice().sort((x,y)=> new Date(x.interview_at)-new Date(y.interview_at));
+  const up = $("#cal-upcoming");
+  if (up) {
+    up.innerHTML = `<h3>Upcoming interviews (${sorted.length})</h3>` + (sorted.length ? sorted.map(a => {
+      const d = new Date(a.interview_at);
+      return `<div class="cal-item ${d.getTime()<now?'past':''}">
+        <div><b>${esc(a.job_title||"—")}</b> · ${esc(a.company||"")}</div>
+        <div class="muted">${d.toLocaleString([], {weekday:"short", dateStyle:"medium", timeStyle:"short"})}</div>
+        <div class="cal-item-actions"><a class="btn" data-ext="${gcalUrl(a)}" href="${gcalUrl(a)}">Add to Google Calendar</a>
+        <button class="btn secondary cal-open" data-id="${a.id}">Open</button></div></div>`;
+    }).join("") : `<div class="muted">No interview dates yet — they appear automatically when an interview email arrives, or set one on an application.</div>`);
+    up.querySelectorAll(".cal-open").forEach(b => b.addEventListener("click", ()=> openApp(+b.dataset.id)));
+  }
+  const grid = $("#cal-grid");
+  if (grid) {
+    const t = new Date(), y=t.getFullYear(), m=t.getMonth();
+    const startDow = (new Date(y,m,1).getDay()+6)%7, days=new Date(y,m+1,0).getDate();
+    const byDay = {};
+    rows.forEach(a => { const d=new Date(a.interview_at); if(d.getFullYear()===y&&d.getMonth()===m){(byDay[d.getDate()]=byDay[d.getDate()]||[]).push(a);} });
+    let cells = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=>`<div class="cal-dow">${d}</div>`).join("");
+    for(let i=0;i<startDow;i++) cells += `<div class="cal-cell empty"></div>`;
+    for(let day=1; day<=days; day++){
+      const items = byDay[day]||[];
+      cells += `<div class="cal-cell ${day===t.getDate()?'today':''}"><div class="cal-daynum">${day}</div>${items.map(a=>`<div class="cal-ev" data-id="${a.id}" title="${esc((a.job_title||'')+' @ '+(a.company||''))}">${esc((a.company||a.job_title||'').slice(0,14))}</div>`).join("")}</div>`;
+    }
+    grid.innerHTML = `<h3 style="margin:18px 0 8px">${new Date(y,m,1).toLocaleString([], {month:"long", year:"numeric"})}</h3><div class="cal-month">${cells}</div>`;
+    grid.querySelectorAll(".cal-ev").forEach(b => b.addEventListener("click", ()=> openApp(+b.dataset.id)));
+  }
+}
 
 async function openApp(id){
   const a = await API.get(`/applications/${id}`);
@@ -192,6 +258,13 @@ async function openApp(id){
       <button class="secondary" id="close-dlg">Close</button>
       <button class="danger" id="del-app">Delete</button>
     </div>
+    <div style="display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap">
+      <label class="muted" style="font-size:13px">Interview date
+        <input type="datetime-local" id="iv-date" value="${a.interview_at ? toLocalInput(a.interview_at) : ""}" />
+      </label>
+      <button class="secondary" id="iv-save">Save date</button>
+      ${a.interview_at ? `<a class="btn" data-ext="${gcalUrl(a)}" href="${gcalUrl(a)}">Add to Google Calendar</a>` : ""}
+    </div>
     ${a.url ? `<p class="muted" style="margin-top:14px"><a href="#" data-ext="${esc(a.url)}">Open original job posting →</a></p>` : ""}
   `;
   $("#app-detail").showModal();
@@ -201,6 +274,13 @@ async function openApp(id){
     $("#app-detail").close();
     await Promise.all([loadStats(), loadApps()]);
   }));
+  $("#iv-save")?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    const v = $("#iv-date").value;
+    await API.patch(`/applications/${a.id}`, { interview_at: v ? v : "" });
+    $("#app-detail").close();
+    await Promise.all([loadApps(), loadCalendar()]);
+  });
   $("#close-dlg").addEventListener("click", () => $("#app-detail").close());
   $("#del-app").addEventListener("click", async (e) => {
     e.preventDefault();
@@ -500,6 +580,7 @@ openApp = async function(id) {
 document.querySelectorAll(".sidebar a").forEach(a => a.addEventListener("click", async () => {
   if (a.dataset.tab === "analytics") loadAnalytics();
   if (a.dataset.tab === "questions") loadQuestions();
+  if (a.dataset.tab === "calendar") loadCalendar();
 }));
 
 /* ============================== Pending review queue ============================== */

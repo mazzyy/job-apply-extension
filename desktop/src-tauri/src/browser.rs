@@ -188,3 +188,37 @@ pub async fn browser_inject(
     }
     Ok(())
 }
+
+/// Safe proxy to the LOCAL backend. Lets scripts injected into the browser pane
+/// reach the backend without tripping the job site's Content-Security-Policy
+/// (which blocks page `fetch` to 127.0.0.1). Callable from the browser webview.
+#[tauri::command]
+pub async fn backend_call(
+    app: AppHandle,
+    method: String,
+    path: String,
+    body: Option<String>,
+) -> Result<String, String> {
+    let port = backend_port(&app);
+    let url = format!("http://127.0.0.1:{}{}", port, path);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let m = method.to_uppercase();
+    let mut req = match m.as_str() {
+        "POST" => client.post(&url),
+        "PUT" => client.put(&url),
+        "PATCH" => client.patch(&url),
+        "DELETE" => client.delete(&url),
+        _ => client.get(&url),
+    };
+    req = req
+        .header("Content-Type", "application/json")
+        .header("X-JAA-Client", "integrated-browser");
+    if let Some(b) = body {
+        req = req.body(b);
+    }
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    resp.text().await.map_err(|e| e.to_string())
+}

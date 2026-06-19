@@ -598,3 +598,28 @@ dialog::backdrop { background: rgba(15,23,42,.5); backdrop-filter: blur(3px); }
 #per-task-grid > label > span { line-height:1.25; }
 #per-task-grid > label select { width:100%; box-sizing:border-box; font-weight:400; }
 @media (max-width:760px){ #per-task-grid { grid-template-columns:1fr; } }
+
+/* Applications pipeline board */
+.apps-board{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+.board-col{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:8px;min-height:90px}
+.board-col-h{font-weight:700;font-size:12px;color:#374151;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.board-count{background:#e5e7eb;border-radius:999px;padding:1px 8px;font-size:11px}
+.board-cards{display:flex;flex-direction:column;gap:6px}
+.board-card{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:8px;cursor:pointer}
+.board-card:hover{border-color:#818cf8}
+.board-card-title{font-size:12.5px;font-weight:600;line-height:1.3}
+.board-card-sub{font-size:11px;color:#6b7280}
+.board-card-date{font-size:11px;color:#6d28d9;margin-top:4px}
+.board-empty{color:#9ca3af;font-size:12px;text-align:center;padding:8px 0}
+/* Calendar */
+.cal-item{display:flex;flex-direction:column;gap:2px;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:8px}
+.cal-item.past{opacity:.55}
+.cal-item-actions{display:flex;gap:8px;margin-top:6px}
+.cal-month{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-dow{font-size:11px;font-weight:700;color:#6b7280;text-align:center;padding:4px 0}
+.cal-cell{min-height:64px;border:1px solid #eef0f5;border-radius:6px;padding:4px;font-size:11px}
+.cal-cell.empty{border:none}
+.cal-cell.today{background:#f5f3ff;border-color:#a78bfa}
+.cal-daynum{color:#9ca3af;font-size:10px}
+.cal-ev{background:linear-gradient(135deg,#818cf8,#a855f7);color:#fff;border-radius:4px;padding:1px 4px;margin-top:2px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:1100px){.apps-board{grid-template-columns:repeat(2,1fr)}}

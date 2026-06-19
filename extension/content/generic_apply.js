@@ -12,6 +12,7 @@
   window.__jaaGenericApplyLoaded = true;
 
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const prog = (note) => { try { if (window.__jaaEmit) window.__jaaEmit("jaa-progress", { note: note }); } catch (e) {} };
 
   function visible(el) {
     if (!el) return false;
@@ -228,12 +229,22 @@
       if (isCaptcha()) return { stopped: "captcha", ats, error: "captcha on page", filled: 0 };
       if (isAccountWall()) return { stopped: "needs_account", ats, reason: "account/login required — finish manually", filled: 0 };
 
+      // Portals are slow SPAs — wait for the application form to render, retrying the
+      // Apply trigger in case the page is still showing the job description.
+      let _t = 0;
+      while (_t < 8 && findFields(document).length < 2) { prog("waiting for the form…"); await clickApplyTrigger(); await wait(1500); _t++; }
+      if (findFields(document).length < 1 && !document.querySelector("input[type='file']")) {
+        return { stopped: "needs_account", ats, filled: 0, reason: "No application form detected — open & finish manually" };
+      }
+      prog("found " + findFields(document).length + " fields · " + ats);
+
       let pf = 0;
       if (window.JAA_Autofill && window.JAA_Autofill.fillAll) { try { const a = await window.JAA_Autofill.fillAll(); pf = a.filled || 0; } catch {} }
       const res = await answerAll(applicationId);
       const cvN = await attachCV();
       tickConsents();
       const filled = pf + res.filled;
+      prog("filled " + filled + (res.blanks && res.blanks.length ? " · " + res.blanks.length + " to ask" : "") + (cvN ? " · CV attached" : ""));
 
       if (supported.indexOf(ats) < 0) {
         return { stopped: "needs_account", ats, filled, answered: res.answered, missing: res.blanks, reason: "Portal not auto-submittable (" + ats + ") — review & submit" };
@@ -244,7 +255,7 @@
         return { stopped: "needs_input", ats, filled, answered: res.answered, missing: res.blanks };
       }
       if (isCaptcha()) return { stopped: "captcha", ats, filled, answered: res.answered, error: "captcha before submit" };
-
+      prog("submitting…");
       const btn = findSubmit();
       if (!btn) return { stopped: "ready_to_submit", ats, filled, answered: res.answered, reason: "no submit button found" };
       btn.click();

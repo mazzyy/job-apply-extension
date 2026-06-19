@@ -58,6 +58,7 @@ def ensure_schema():
         ("app_settings", "auto_apply_external", "INTEGER DEFAULT 0"),
         ("app_settings", "apply_types", "VARCHAR(20) DEFAULT 'easy'"),
         ("profiles", "portal_password", "VARCHAR(200)"),
+        ("applications", "interview_at", "DATETIME"),
     ]
     with engine.begin() as conn:
         for table, col, ddl in add_cols:

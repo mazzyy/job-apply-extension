@@ -10,7 +10,7 @@ from ..services.events import emit
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
-JAA_BUILD = "2026-06-16-ask-save"  # bump on every change; surfaced in /auto-apply/status
+JAA_BUILD = "2026-06-16-calendar"  # bump on every change; surfaced in /auto-apply/status
 
 class LogRequest(BaseModel):
     """Used when the user triggers Autofill on a page without analyzing first.
@@ -80,8 +80,9 @@ def log_action(body: LogRequest, db: Session = Depends(get_db)):
 
 
 class StatusUpdate(BaseModel):
-    status: str
+    status: str | None = None
     notes: str | None = None
+    interview_at: str | None = None    # ISO datetime; "" clears it
 
 @router.get("/")
 def list_apps(limit: int = 200, db: Session = Depends(get_db)):
@@ -116,6 +117,16 @@ def stats(db: Session = Depends(get_db)):
         "by_source": by_source, "fit_buckets": buckets,
     }
 
+@router.get("/calendar")
+def calendar_feed(db: Session = Depends(get_db)):
+    """Applications that have an interview date — for the Calendar tab."""
+    rows = (db.query(Application)
+            .filter(Application.interview_at.isnot(None))
+            .order_by(Application.interview_at.asc()).all())
+    return [{"id": a.id, "job_title": a.job_title, "company": a.company, "url": a.url,
+             "status": a.status, "interview_at": a.interview_at.isoformat()} for a in rows]
+
+
 @router.get("/{app_id}")
 def get_app(app_id: int, db: Session = Depends(get_db)):
     a = db.query(Application).filter(Application.id == app_id).first()
@@ -129,13 +140,25 @@ def update_status(app_id: int, body: StatusUpdate, db: Session = Depends(get_db)
     if not a:
         raise HTTPException(404, "Not found")
     prev = a.status
-    a.status = body.status
+    if body.status:
+        a.status = body.status
+        if prev != body.status:
+            emit(db, a.id, kind="status_change",
+                 title=f"Status: {prev} → {body.status}",
+                 detail=body.notes or None, source="ui", commit=False)
     if body.notes is not None:
         a.notes = body.notes
-    if prev != body.status:
-        emit(db, a.id, kind="status_change",
-             title=f"Status: {prev} → {body.status}",
-             detail=body.notes or None, source="ui", commit=False)
+    if body.interview_at is not None:
+        if body.interview_at.strip() == "":
+            a.interview_at = None
+        else:
+            try:
+                import re as _re
+                from datetime import datetime as _d
+                s = _re.sub(r"[+-]\d{2}:?\d{2}$", "", body.interview_at.strip().replace("Z", "")).strip()
+                a.interview_at = _d.fromisoformat(s)
+            except Exception:
+                pass
     db.commit()
     return _to_dict(a)
 
@@ -155,7 +178,9 @@ def _to_dict(a: Application, include_full: bool = False) -> dict:
         "location": a.location, "url": a.url, "source": a.source,
         "language": a.language, "requires_other_language": a.requires_other_language,
         "fit_score": a.fit_score, "verdict": a.verdict, "status": a.status,
+        "interview_at": a.interview_at.isoformat() if a.interview_at else None,
         "created_at": a.created_at.isoformat(),
+        "updated_at": a.updated_at.isoformat() if a.updated_at else None,
         "strengths": _safe(a.strengths), "gaps": _safe(a.gaps),
         "recommendations": _safe(a.recommendations),
     }

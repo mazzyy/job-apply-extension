@@ -22,6 +22,7 @@ class Application(Base):
     recommendations = Column(Text, nullable=True)      # JSON list
     verdict = Column(Text, nullable=True)
     status = Column(String(50), default="analyzed")    # analyzed | applied | interview | rejected | offer
+    interview_at = Column(DateTime, nullable=True)     # parsed from interview emails or set manually
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
