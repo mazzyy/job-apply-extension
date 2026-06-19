@@ -30,6 +30,8 @@ def parse_email(body: EmailIn, db: Session = Depends(get_db)):
         app = db.query(Application).filter(Application.id == body.application_id).first()
     if not app:
         app = guess_application(db, body.text, sender_domain)
+    if not app and body.apply and info.get("kind") in ("interview_invite", "rejection", "offer") and (info.get("confidence") or 0) >= 0.6:
+        app = gmail_sync.create_application_from_email(db, info, body.text)
 
     applied = False
     status_changed = False

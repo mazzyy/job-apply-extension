@@ -15,7 +15,7 @@ import threading
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from ..models import AppSettings, Application, ProcessedEmail
-from .email_parser import classify_email, guess_application, _extract_sender_domain
+from .email_parser import classify_email, guess_application, _extract_sender_domain, _is_platform
 from .events import emit
 
 log = logging.getLogger("jaa.gmail")
@@ -112,6 +112,28 @@ def _looks_job_related(db: Session, subject: str, body: str, sender: str) -> boo
                 if (a.url and base in a.url.lower()) or (a.company and base in a.company.lower()):
                     return True
     return False
+
+
+def create_application_from_email(db: Session, info: dict, raw_text: str) -> Application:
+    """A real response email matched no existing application → create one so it
+    shows up in the pipeline + calendar. Used for jobs applied outside the app."""
+    company = (info.get("sender_company") or "").strip()
+    if _is_platform(company):
+        company = ""
+    notes = (info.get("summary") or "").strip()
+    if info.get("next_action"):
+        notes = (notes + "\nNext: " + info["next_action"]).strip()
+    a = Application(
+        company=company or None,
+        job_title=("Role at " + company) if company else "Job (from email)",
+        status="applied",
+        source="email",
+        notes=notes or None,
+    )
+    db.add(a); db.commit(); db.refresh(a)
+    emit(db, a.id, kind="created_from_email",
+         title="Created from inbox email", detail=info.get("summary"), source="email", commit=True)
+    return a
 
 
 def apply_classification(db: Session, app_row: Application | None, info: dict,
@@ -281,6 +303,10 @@ def _sync_inner(db: Session) -> dict:
             if info.get("kind") not in (None, "unrelated"):
                 app_row = guess_application(db, full_text, _extract_sender_domain(full_text),
                                             company_hint=info.get("sender_company"))
+                if not app_row and info.get("kind") in ("interview_invite", "rejection", "offer") and (info.get("confidence") or 0) >= 0.6:
+                    app_row = create_application_from_email(db, info, full_text)
+                    summary.setdefault("created", 0)
+                    summary["created"] += 1
                 if app_row:
                     rec.application_id = app_row.id
                     summary["matched"] += 1

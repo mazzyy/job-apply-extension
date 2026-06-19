@@ -9,7 +9,7 @@
   const invoke = window.__TAURI__.core.invoke;
   const listen = window.__TAURI__.event.listen;
   const BASE = location.origin;
-  const JAA_UI_BUILD = "2026-06-16-calendar"; // shown in the log to confirm what's actually running
+  const JAA_UI_BUILD = "2026-06-16-email-apps"; // shown in the log to confirm what's actually running
 
   const SPEEDS = {
     slow:   { min: 90000, rand: 90000, label: "~90–180s between submits (safest)" },

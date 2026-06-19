@@ -246,6 +246,7 @@ async function openApp(id){
       ${a.requires_other_language ? `<span class="lang-tag">${esc(a.requires_other_language)} required</span>` : ""}
     </div>
     <p>${esc(a.verdict || "")}</p>
+    ${a.notes ? `<div style="background:#f5f3ff;border:1px solid #e9e3ff;border-radius:8px;padding:8px 10px;margin:8px 0;font-size:13px"><b>Notes / latest response</b><br>${esc(a.notes).replace(/\n/g,"<br>")}</div>` : ""}
     <h3>Strengths</h3><ul>${(a.strengths||[]).map(s=>`<li>${esc(s)}</li>`).join("")||"<li>—</li>"}</ul>
     <h3>Gaps</h3><ul>${(a.gaps||[]).map(s=>`<li>${esc(s)}</li>`).join("")||"<li>—</li>"}</ul>
     <h3>Recommendations</h3><ul>${(a.recommendations||[]).map(s=>`<li>${esc(s)}</li>`).join("")||"<li>—</li>"}</ul>

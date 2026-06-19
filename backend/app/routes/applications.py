@@ -10,7 +10,7 @@ from ..services.events import emit
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
-JAA_BUILD = "2026-06-16-calendar"  # bump on every change; surfaced in /auto-apply/status
+JAA_BUILD = "2026-06-16-email-apps"  # bump on every change; surfaced in /auto-apply/status
 
 class LogRequest(BaseModel):
     """Used when the user triggers Autofill on a page without analyzing first.
