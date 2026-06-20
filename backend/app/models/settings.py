@@ -51,4 +51,13 @@ class AppSettings(Base):
     # Which LinkedIn jobs to apply to: "easy" | "direct" | "both"
     apply_types = Column(String(20), default="easy")
 
+    # Automated job discovery
+    discovery_enabled = Column(Integer, default=0)
+    discovery_keywords = Column(Text, nullable=True)
+    discovery_location = Column(String(200), nullable=True)
+    discovery_min_fit = Column(Integer, default=0)
+    discovery_companies = Column(Text, nullable=True)   # JSON [{ats, slug}]
+    discovery_last_run = Column(DateTime, nullable=True)
+    discovery_sources = Column(Text, nullable=True)   # JSON per-source config (keys, limits, usage)
+
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

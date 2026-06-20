@@ -57,6 +57,13 @@ def ensure_schema():
         ("app_settings", "browser_mode", "VARCHAR(20) DEFAULT 'system'"),
         ("app_settings", "auto_apply_external", "INTEGER DEFAULT 0"),
         ("app_settings", "apply_types", "VARCHAR(20) DEFAULT 'easy'"),
+        ("app_settings", "discovery_enabled", "INTEGER DEFAULT 0"),
+        ("app_settings", "discovery_keywords", "TEXT"),
+        ("app_settings", "discovery_location", "VARCHAR(200)"),
+        ("app_settings", "discovery_min_fit", "INTEGER DEFAULT 0"),
+        ("app_settings", "discovery_companies", "TEXT"),
+        ("app_settings", "discovery_last_run", "DATETIME"),
+        ("app_settings", "discovery_sources", "TEXT"),
         ("profiles", "portal_password", "VARCHAR(200)"),
         ("applications", "interview_at", "DATETIME"),
     ]

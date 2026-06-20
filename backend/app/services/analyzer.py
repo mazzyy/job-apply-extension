@@ -51,6 +51,8 @@ def _get_settings_row():
 def _resolve_provider(task: str) -> tuple:
     """Returns (provider_name, model_name)."""
     row = _get_settings_row()
+    if task == "email_classify":
+        return "local", row.local_model or "llama3.2:3b"
     mode = (row.llm_provider or "cloud").lower()
     cloud_deployment = (row.azure_deployment or "").strip() or cfg.AZURE_OPENAI_DEPLOYMENT
     if mode == "cloud":

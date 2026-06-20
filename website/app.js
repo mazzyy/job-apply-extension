@@ -205,6 +205,7 @@ function gcalUrl(a){
 }
 async function loadCalendar(){
   let rows = []; try { rows = await API.get("/applications/calendar"); } catch {}
+  if (!Array.isArray(rows)) rows = [];
   const now = Date.now();
   const sorted = rows.slice().sort((x,y)=> new Date(x.interview_at)-new Date(y.interview_at));
   const up = $("#cal-upcoming");
@@ -366,6 +367,7 @@ $("#save-api").addEventListener("click", () => {
 (async function init(){
   await checkApi();
   await Promise.all([loadStats(), loadApps(), loadCvs(), loadProfile()]);
+  loadCalendar();
 })();
 
 $("#reverify")?.addEventListener("click", async () => {
@@ -582,6 +584,7 @@ document.querySelectorAll(".sidebar a").forEach(a => a.addEventListener("click",
   if (a.dataset.tab === "analytics") loadAnalytics();
   if (a.dataset.tab === "questions") loadQuestions();
   if (a.dataset.tab === "calendar") loadCalendar();
+  if (a.dataset.tab === "discover") loadDiscovery();
 }));
 
 /* ============================== Pending review queue ============================== */
@@ -1502,6 +1505,16 @@ async function loadGmailEmails(){
   if (inboxFilter.company) params.set("company", inboxFilter.company);
   if (inboxFilter.kind) params.set("kind", inboxFilter.kind);
   try { rows = await API.get("/emails/gmail/processed?" + params); } catch { return; }
+  if (!Array.isArray(rows)) rows = [];
+  { // collapse duplicates (same sender + subject) — keep the most recent
+    const seen = new Map();
+    for (const r of rows) {
+      const k = ((r.sender||"") + "|" + (r.subject||"")).toLowerCase();
+      const prev = seen.get(k);
+      if (!prev || new Date(r.received_at||0) > new Date(prev.received_at||0)) seen.set(k, r);
+    }
+    rows = Array.from(seen.values()).sort((a,b)=> new Date(b.received_at||0) - new Date(a.received_at||0));
+  }
   const box = $("#gmail-emails");
   if (!rows.length) {
     const filtered = inboxFilter.q || inboxFilter.source || inboxFilter.company || inboxFilter.kind;
@@ -1780,3 +1793,63 @@ $all(".sidebar a").forEach(a => a.addEventListener("click", () => {
   if (a.dataset.tab === "autoapply") { refreshAutoApply(); startAaPoll(); }
   else stopAaPoll();
 }));
+
+
+/* ============================== Find jobs (discovery) ============================== */
+function discCompaniesToText(arr){ return (arr||[]).map(c=>`${c.ats}:${c.slug}`).join("\n"); }
+function discCompaniesFromText(t){
+  return (t||"").split(/[\n,]/).map(s=>s.trim()).filter(Boolean).map(s=>{
+    const i=s.indexOf(":"); return { ats:(s.slice(0,i)||"").trim().toLowerCase(), slug:(s.slice(i+1)||"").trim() };
+  }).filter(c=>c.ats && c.slug);
+}
+async function loadDiscovery(){
+  let s={}; try{ s=await API.get("/discovery/settings"); }catch{}
+  if($("#disc-keywords")) $("#disc-keywords").value=s.keywords||"";
+  if($("#disc-location")) $("#disc-location").value=s.location||"";
+  if($("#disc-minfit")) $("#disc-minfit").value=s.min_fit||0;
+  if($("#disc-enabled")) $("#disc-enabled").checked=!!s.enabled;
+  if($("#disc-companies")) $("#disc-companies").value=discCompaniesToText(s.companies);
+  const src=s.sources||{}, jb=src.jooble||{}, rp=src.rapidapi||{};
+  if($("#src-jooble-en")) $("#src-jooble-en").checked=!!jb.enabled;
+  if($("#src-jooble-limit")) $("#src-jooble-limit").value=(jb.limit!=null?jb.limit:500);
+  if($("#src-jooble-key")) $("#src-jooble-key").placeholder=jb.key_set?("saved "+jb.key_preview):"Jooble API key";
+  if($("#src-jooble-usage")) $("#src-jooble-usage").textContent=jb.key_set?`${jb.used||0}/${jb.limit||0} this month`:"";
+  if($("#src-rapid-en")) $("#src-rapid-en").checked=!!rp.enabled;
+  if($("#src-rapid-limit")) $("#src-rapid-limit").value=(rp.limit!=null?rp.limit:100);
+  if($("#src-rapid-country")) $("#src-rapid-country").value=rp.country||"de";
+  if($("#src-rapid-key")) $("#src-rapid-key").placeholder=rp.key_set?("saved "+rp.key_preview):"RapidAPI key";
+  if($("#src-rapid-usage")) $("#src-rapid-usage").textContent=rp.key_set?`${rp.used||0}/${rp.limit||0} this month`:"";
+}
+async function saveDiscovery(){
+  await API.put("/discovery/settings", {
+    enabled: $("#disc-enabled").checked, keywords: $("#disc-keywords").value,
+    location: $("#disc-location").value, min_fit: +$("#disc-minfit").value||0,
+    companies: discCompaniesFromText($("#disc-companies").value),
+    sources: {
+      jooble:   { enabled: $("#src-jooble-en").checked, key: ($("#src-jooble-key").value||"").trim(), limit: +$("#src-jooble-limit").value||500 },
+      rapidapi: { enabled: $("#src-rapid-en").checked, key: ($("#src-rapid-key").value||"").trim(), limit: +$("#src-rapid-limit").value||100, country: ($("#src-rapid-country").value||"de").trim() },
+    },
+  });
+}
+function renderDiscResults(jobs){
+  const box=$("#disc-results"); if(!box) return;
+  box.innerHTML = `<h3 style="margin:16px 0 8px">${jobs.length} matches</h3>` + (jobs.length ? jobs.map(j=>`
+    <div class="disc-row">
+      <div class="disc-row-top"><b>${esc(j.title||"—")}</b> · ${esc(j.company||"")} <span class="fit-pill ${fitClass(j.fit)}">${j.fit||0}</span></div>
+      <div class="muted">${esc(j.location||"")}${j.remote?" · remote":""} · ${esc(j.platform||"")}</div>
+      <a class="muted" data-ext="${esc(j.url||"")}" href="${esc(j.url||"")}">${esc((j.url||"").slice(0,90))}</a>
+    </div>`).join("") : `<div class="muted">No matches — broaden keywords or lower the min fit.</div>`);
+}
+async function searchDiscovery(){
+  const st=$("#disc-status"); st.textContent="Searching…";
+  try{ await saveDiscovery(); const r=await API.post("/discovery/preview", {}); renderDiscResults(r.jobs||[]); st.textContent=`${r.count} found.`; }
+  catch(e){ st.textContent="Error: "+e.message; }
+}
+async function queueDiscovery(){
+  const st=$("#disc-status"); st.textContent="Queueing…";
+  try{ await saveDiscovery(); const r=await API.post("/discovery/run", {}); st.textContent=`Queued ${r.queued} new (of ${r.found}). See Applications / Manual queue.`; await loadApps(); }
+  catch(e){ st.textContent="Error: "+e.message; }
+}
+$("#disc-save")?.addEventListener("click", async ()=>{ await saveDiscovery(); if($("#src-jooble-key"))$("#src-jooble-key").value=""; if($("#src-rapid-key"))$("#src-rapid-key").value=""; await loadDiscovery(); $("#disc-status").textContent="Saved."; });
+$("#disc-search")?.addEventListener("click", searchDiscovery);
+$("#disc-queue")?.addEventListener("click", queueDiscovery);

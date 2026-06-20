@@ -96,7 +96,9 @@ JSON schema:
   "sender_company": "",
   "interview_datetime": "<ISO datetime if mentioned, else null>",
   "salary_mentioned": "<extracted salary string if any, else null>",
-  "next_action": "<what the user should do next>"
+  "next_action": "<what the user should do next>",
+  "job_title": "<the exact role/position this email is about (from subject/body), else null>",
+  "apply_url": "<any job/application/portal URL in the email, else null>"
 }}
 IMPORTANT rules:
 - Submission confirmations ("your application was sent to X", "we received your
@@ -129,7 +131,7 @@ Be conservative — only set confidence > 0.7 if very clear."""
     except (TypeError, ValueError):
         data["confidence"] = 0.0
     for k in ("kind", "summary", "suggested_status", "sender_name", "sender_company",
-              "interview_datetime", "salary_mentioned", "next_action"):
+              "interview_datetime", "salary_mentioned", "next_action", "job_title", "apply_url"):
         v = data.get(k)
         if v in ("null", "None"): data[k] = None
         elif not isinstance(v, (str, type(None))): data[k] = None

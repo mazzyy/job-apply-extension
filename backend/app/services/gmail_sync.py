@@ -123,9 +123,11 @@ def create_application_from_email(db: Session, info: dict, raw_text: str) -> App
     notes = (info.get("summary") or "").strip()
     if info.get("next_action"):
         notes = (notes + "\nNext: " + info["next_action"]).strip()
+    job_title = (info.get("job_title") or "").strip() or (("Role at " + company) if company else "Job (from email)")
     a = Application(
         company=company or None,
-        job_title=("Role at " + company) if company else "Job (from email)",
+        job_title=job_title,
+        url=(info.get("apply_url") or None),
         status="applied",
         source="email",
         notes=notes or None,
@@ -162,6 +164,11 @@ def apply_classification(db: Session, app_row: Application | None, info: dict,
     emit(db, app_row.id, kind=kind_map.get(info.get("kind", ""), "email_received"),
          title=info.get("summary") or "Email received",
          detail=raw_text[:2000], source="email", commit=False)
+    jt = (info.get("job_title") or "").strip()
+    if jt and (not app_row.job_title or app_row.job_title.startswith("Role at") or app_row.job_title == "Job (from email)"):
+        app_row.job_title = jt
+    if info.get("apply_url") and not app_row.url:
+        app_row.url = info.get("apply_url")
     idt = info.get("interview_datetime")
     if idt and isinstance(idt, str):
         try:
@@ -261,9 +268,12 @@ def _sync_inner(db: Session) -> dict:
             summary["fetched"] += 1
 
             message_id = (msg.get("Message-ID") or "").strip()[:500]
-            if message_id and db.query(ProcessedEmail).filter(
-                    ProcessedEmail.message_id == message_id).first():
-                continue  # already processed (e.g. lookback overlap)
+            if not message_id:
+                import hashlib
+                sig = (msg.get("From", "") + "|" + msg.get("Subject", "") + "|" + msg.get("Date", ""))
+                message_id = "syn:" + hashlib.sha1(sig.encode("utf-8", "ignore")).hexdigest()
+            if db.query(ProcessedEmail).filter(ProcessedEmail.message_id == message_id).first():
+                continue  # already processed (dedupe by Message-ID or content signature)
 
             subject = _decode(msg.get("Subject"))[:600]
             sender = _decode(msg.get("From"))[:300]

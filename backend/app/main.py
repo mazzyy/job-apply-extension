@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from .database import Base, engine, ensure_schema
 from .config import settings
-from .routes import cvs, analyze, applications, profile, questions, emails, analytics, chat, settings as settings_router
+from .routes import cvs, analyze, applications, profile, questions, emails, analytics, chat, settings as settings_router, discovery
 from .services.analyzer import verify_model
 
 logging.basicConfig(
@@ -49,6 +49,33 @@ async def _gmail_poll_loop():
         await asyncio.sleep(300)
 
 
+async def _discovery_poll_loop():
+    """Run job discovery on a schedule when enabled."""
+    import asyncio
+    from .database import SessionLocal
+    from .models import AppSettings
+    from .services import job_discovery
+    await asyncio.sleep(60)
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                row = db.query(AppSettings).first()
+                enabled = bool(row and getattr(row, "discovery_enabled", 0))
+            finally:
+                db.close()
+            if enabled:
+                db = SessionLocal()
+                try:
+                    res = await asyncio.to_thread(job_discovery.discover_and_queue, db)
+                    log.info("Discovery: %s", res)
+                finally:
+                    db.close()
+        except Exception as e:
+            log.warning("discovery poll error: %s", e)
+        await asyncio.sleep(6 * 3600)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # IMPORTANT: never block startup on the Azure check — the server must accept
@@ -71,9 +98,11 @@ async def lifespan(app: FastAPI):
              settings.AZURE_OPENAI_DEPLOYMENT, settings.AZURE_OPENAI_ENDPOINT)
     verify_task = asyncio.create_task(_verify_model_bg())
     poll_task = asyncio.create_task(_gmail_poll_loop())
+    disc_task = asyncio.create_task(_discovery_poll_loop())
     yield
     verify_task.cancel()
     poll_task.cancel()
+    disc_task.cancel()
 
 
 app = FastAPI(title="Job Apply Assistant API", version="0.2.1", lifespan=lifespan)
@@ -147,6 +176,7 @@ app.include_router(emails.router)
 app.include_router(analytics.router)
 app.include_router(settings_router.router)
 app.include_router(chat.router)
+app.include_router(discovery.router)
 
 # Serve the dashboard alongside the API so the Tauri shell can load it from one origin.
 import os
