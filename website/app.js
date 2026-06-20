@@ -186,12 +186,22 @@ function renderBoard(){
     return `<div class="board-col"><div class="board-col-h">${col.label}<span class="board-count">${items.length}</span></div>
       <div class="board-cards">${items.map(a => `
         <div class="board-card" data-id="${a.id}">
+          <button class="board-del" data-del="${a.id}" title="Delete">✕</button>
           <div class="board-card-title">${esc(a.job_title||"—")}</div>
           <div class="board-card-sub">${esc(a.company||"")}</div>
           ${a.interview_at ? `<div class="board-card-date">📅 ${new Date(a.interview_at).toLocaleString([], {dateStyle:"medium", timeStyle:"short"})}</div>` : ""}
         </div>`).join("") || `<div class="board-empty">—</div>`}</div></div>`;
   }).join("");
-  host.querySelectorAll(".board-card").forEach(c => c.addEventListener("click", () => openApp(+c.dataset.id)));
+  host.querySelectorAll(".board-card").forEach(c => c.addEventListener("click", (e) => {
+    if (e.target.closest("[data-del]")) return;
+    openApp(+c.dataset.id);
+  }));
+  host.querySelectorAll(".board-del").forEach(b => b.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (!confirm("Delete this job?")) return;
+    await API.del(`/applications/${b.dataset.del}`);
+    await Promise.all([loadStats(), loadApps()]);
+  }));
 }
 
 function toLocalInput(iso){ try{ const d=new Date(iso); return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}catch(e){return "";} }
@@ -1713,6 +1723,7 @@ async function loadAutoApplyLog(){
         <span class="aa-title">${esc(shortTitle(r))}${r.company ? " · " + esc(r.company) : ""}</span>
         ${r.platform ? `<span class="aa-plat">${esc(platLabel[r.platform] || r.platform)}</span>` : ""}
         <span class="aa-badge aa-${esc(r.status)}">${esc(statusText[r.status] || r.status)}</span>
+        <button class="aa-row-del" data-del="${r.id}" title="Delete">✕</button>
       </div>
       <div class="aa-meta">
         ${r.is_search
@@ -1729,8 +1740,14 @@ async function loadAutoApplyLog(){
       </div>
     </div>`).join("");
   $all(".aa-row").forEach(row => row.addEventListener("click", e => {
-    if (e.target.closest("a") || e.target.closest("[data-ext]")) return;
+    if (e.target.closest("a") || e.target.closest("[data-ext]") || e.target.closest("[data-del]")) return;
     row.classList.toggle("open");
+  }));
+  $all(".aa-row-del").forEach(b => b.addEventListener("click", async e => {
+    e.stopPropagation();
+    if (!confirm("Delete this log entry (and its application record)?")) return;
+    try { await API.del(`/applications/${b.dataset.del}`); } catch (err) {}
+    loadAutoApplyLog();
   }));
 }
 
@@ -1764,13 +1781,19 @@ $("#aa-portal-submit")?.addEventListener("change", async () => {
   try { await API.post("/applications/auto-apply/toggle", { enabled: aaEnabled, portal_auto_submit: $("#aa-portal-submit").value === "1" }); } catch {}
 });
 
+$("#aa-clear-log")?.addEventListener("click", async () => {
+  if (!confirm("Clear the application log? Removes queued, needs-review, failed and search entries. Applied/interview records are kept.")) return;
+  try { const r = await API.post("/applications/auto-apply/clear-log", {}); if ($("#aa-queue-status")) $("#aa-queue-status").textContent = `${r.removed} log entries removed.`; } catch (e) {}
+  loadAutoApplyLog(); loadApps?.();
+});
+
 $("#aa-clear-queue")?.addEventListener("click", async () => {
-  if (!confirm("Remove all queued jobs and pending searches?")) return;
+  if (!confirm("Remove ALL not-yet-applied jobs (queued + discovery/manual queue)? Applied/interview records are kept.")) return;
   try {
     const r = await API.post("/applications/auto-apply/clear-queue", {});
     $("#aa-queue-status").textContent = `${r.removed} removed from queue.`;
   } catch (e) { $("#aa-queue-status").textContent = "Failed: " + e.message; }
-  refreshAutoApply();
+  refreshAutoApply(); loadApps?.();
 });
 
 $all(".aa-chip").forEach(c => c.addEventListener("click", () => {
@@ -1807,6 +1830,7 @@ async function loadDiscovery(){
   if($("#disc-keywords")) $("#disc-keywords").value=s.keywords||"";
   if($("#disc-location")) $("#disc-location").value=s.location||"";
   if($("#disc-minfit")) $("#disc-minfit").value=s.min_fit||0;
+  if($("#disc-maxage")) $("#disc-maxage").value=(s.max_age_days>0?s.max_age_days:30);
   if($("#disc-enabled")) $("#disc-enabled").checked=!!s.enabled;
   if($("#disc-companies")) $("#disc-companies").value=discCompaniesToText(s.companies);
   const src=s.sources||{}, jb=src.jooble||{}, rp=src.rapidapi||{};
@@ -1824,6 +1848,7 @@ async function saveDiscovery(){
   await API.put("/discovery/settings", {
     enabled: $("#disc-enabled").checked, keywords: $("#disc-keywords").value,
     location: $("#disc-location").value, min_fit: +$("#disc-minfit").value||0,
+    max_age_days: +$("#disc-maxage").value||0,
     companies: discCompaniesFromText($("#disc-companies").value),
     sources: {
       jooble:   { enabled: $("#src-jooble-en").checked, key: ($("#src-jooble-key").value||"").trim(), limit: +$("#src-jooble-limit").value||500 },
@@ -1831,18 +1856,21 @@ async function saveDiscovery(){
     },
   });
 }
-function renderDiscResults(jobs){
+function renderDiscResults(jobs, stats){
   const box=$("#disc-results"); if(!box) return;
-  box.innerHTML = `<h3 style="margin:16px 0 8px">${jobs.length} matches</h3>` + (jobs.length ? jobs.map(j=>`
+  const s = stats||{};
+  const note = (s.old_hidden||s.no_date)
+    ? ` <span style="font-weight:400;color:#6b7280;font-size:12px">· ${s.old_hidden||0} hidden (older than ${s.max_age||0}d)${s.no_date?` · ${s.no_date} with no date`:""}</span>` : "";
+  box.innerHTML = `<h3 style="margin:16px 0 8px">${jobs.length} matches${note}</h3>` + (jobs.length ? jobs.map(j=>`
     <div class="disc-row">
       <div class="disc-row-top"><b>${esc(j.title||"—")}</b> · ${esc(j.company||"")} <span class="fit-pill ${fitClass(j.fit)}">${j.fit||0}</span></div>
-      <div class="muted">${esc(j.location||"")}${j.remote?" · remote":""} · ${esc(j.platform||"")}</div>
+      <div class="muted">${esc(j.location||"")}${j.remote?" · remote":""} · ${esc(j.platform||"")}${j.age_days!=null?" · "+j.age_days+"d ago":""}</div>
       <a class="muted" data-ext="${esc(j.url||"")}" href="${esc(j.url||"")}">${esc((j.url||"").slice(0,90))}</a>
     </div>`).join("") : `<div class="muted">No matches — broaden keywords or lower the min fit.</div>`);
 }
 async function searchDiscovery(){
   const st=$("#disc-status"); st.textContent="Searching…";
-  try{ await saveDiscovery(); const r=await API.post("/discovery/preview", {}); renderDiscResults(r.jobs||[]); st.textContent=`${r.count} found.`; }
+  try{ await saveDiscovery(); const r=await API.post("/discovery/preview", {}); renderDiscResults(r.jobs||[], r.stats); const h=r.stats&&r.stats.old_hidden?` (${r.stats.old_hidden} expired hidden)`:""; st.textContent=`${r.count} found${h}.`; }
   catch(e){ st.textContent="Error: "+e.message; }
 }
 async function queueDiscovery(){

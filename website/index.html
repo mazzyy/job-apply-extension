@@ -253,10 +253,13 @@
           <h3 class="aa-card-title">Application log</h3>
           <span class="muted" style="font-size:12px">click a row for the answers it submitted</span>
         </div>
-        <div class="aa-plat-tabs" id="aa-plat-tabs">
-          <button class="aa-plat-tab active" data-plat="">All</button>
-          <button class="aa-plat-tab" data-plat="linkedin">LinkedIn</button>
-          <button class="aa-plat-tab" data-plat="successfactors">Portals</button>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <div class="aa-plat-tabs" id="aa-plat-tabs">
+            <button class="aa-plat-tab active" data-plat="">All</button>
+            <button class="aa-plat-tab" data-plat="linkedin">LinkedIn</button>
+            <button class="aa-plat-tab" data-plat="successfactors">Portals</button>
+          </div>
+          <button class="btn secondary" id="aa-clear-log">Clear log</button>
         </div>
       </div>
       <div id="aa-log" style="margin-top:12px"></div>
@@ -644,20 +647,26 @@
         <label>Keywords (comma-separated)<input id="disc-keywords" placeholder="devops, cloud engineer, kubernetes" /></label>
         <label>Location<input id="disc-location" placeholder="Germany / Berlin / Remote" /></label>
         <label>Min fit score<input id="disc-minfit" type="number" min="0" max="100" value="0" /></label>
+        <label>Max age (days)<input id="disc-maxage" type="number" min="0" placeholder="30" value="30" /></label>
       </div>
       <label style="display:block;margin-top:8px">Target companies (optional) — one per line as <code>greenhouse:slug</code> or <code>lever:slug</code>
         <textarea id="disc-companies" rows="3" placeholder="greenhouse:flixbus&#10;lever:wongdoody"></textarea>
       </label>
       <div class="disc-actions">
-        <label class="disc-toggle"><input type="checkbox" id="disc-enabled" /> Auto-discover daily</label>
-        <button class="btn secondary" id="disc-save">Save</button>
         <button class="btn" id="disc-search">Search now</button>
         <button class="btn" id="disc-queue">Queue matches</button>
-        <span class="muted" id="disc-status"></span>
+        <button class="btn secondary" id="disc-save">Save settings</button>
+        <label class="disc-toggle"><input type="checkbox" id="disc-enabled" /> <span>Auto-discover daily</span></label>
       </div>
+      <div class="muted" id="disc-status" style="margin-top:8px;font-size:12.5px"></div>
+      <div class="muted" style="margin-top:6px;font-size:11.5px">No API key needed — <b>Arbeitnow</b> + your <b>target-company boards</b> always run. "Search now" works on its own; add keys below only for extra coverage.</div>
     </div>
     <div class="card">
-      <h3 class="aa-card-title">Search APIs (optional — keyword search across more boards)</h3>
+      <h3 class="aa-card-title">Search sources</h3>
+      <div class="disc-src-row">
+        <label class="disc-toggle"><input type="checkbox" checked disabled /> <b>Arbeitnow + company boards</b></label>
+        <span class="muted">Built-in · always on · no key</span>
+      </div>
       <div class="disc-src-row">
         <label class="disc-toggle"><input type="checkbox" id="src-jooble-en" /> <b>Jooble</b></label>
         <input id="src-jooble-key" type="password" placeholder="Jooble API key" />

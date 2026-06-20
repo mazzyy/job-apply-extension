@@ -22,6 +22,7 @@ class DiscoverySettingsIn(BaseModel):
     keywords: str | None = None
     location: str | None = None
     min_fit: int | None = None
+    max_age_days: int | None = None
     companies: list | None = None    # [{"ats": "greenhouse"|"lever", "slug": "acme"}]
     sources: dict | None = None      # {jooble:{enabled,key,limit}, rapidapi:{enabled,key,limit,country}}
 
@@ -36,6 +37,7 @@ def _to_dict(r: AppSettings) -> dict:
         "keywords": r.discovery_keywords or "",
         "location": r.discovery_location or "",
         "min_fit": r.discovery_min_fit or 0,
+        "max_age_days": getattr(r, "discovery_max_age_days", 0) or 0,
         "companies": companies,
         "last_run": r.discovery_last_run.isoformat() if getattr(r, "discovery_last_run", None) else None,
         "sources": _masked_sources(r),
@@ -68,6 +70,7 @@ def put_settings(body: DiscoverySettingsIn, db: Session = Depends(get_db)):
     if d.get("keywords") is not None: r.discovery_keywords = d["keywords"]
     if d.get("location") is not None: r.discovery_location = d["location"]
     if d.get("min_fit") is not None: r.discovery_min_fit = max(0, min(100, int(d["min_fit"])))
+    if d.get("max_age_days") is not None: r.discovery_max_age_days = max(0, int(d["max_age_days"]))
     if d.get("companies") is not None: r.discovery_companies = json.dumps(d["companies"])
     if d.get("sources") is not None:
         cur = job_discovery.load_sources(r)
@@ -88,8 +91,9 @@ def put_settings(body: DiscoverySettingsIn, db: Session = Depends(get_db)):
 @router.post("/preview")
 def preview(db: Session = Depends(get_db)):
     """Search + filter + fit-score, without queueing — for the UI."""
-    jobs = job_discovery.gather(db, _row(db))
-    return {"count": len(jobs), "jobs": jobs}
+    stats = {}
+    jobs = job_discovery.gather(db, _row(db), stats)
+    return {"count": len(jobs), "jobs": jobs, "stats": stats}
 
 
 @router.post("/run")

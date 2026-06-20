@@ -251,6 +251,8 @@ async function runOneAutoApply(next) {
     await waitForTabComplete(tab.id);
     await new Promise(r => setTimeout(r, 6000));
     const isSF = next.platform === "successfactors";
+    const isLinkedIn = next.platform === "linkedin" || !next.platform;
+    const isPortal = !isSF && !isLinkedIn;   // greenhouse/lever/ashby/personio/workable/… → generic engine
     // Whether portals auto-submit is user-controlled in settings
     let portalAutoSubmit = false;
     try { const st = await apiFetch("/applications/auto-apply/status"); portalAutoSubmit = !!st.portal_auto_submit; } catch {}
@@ -258,6 +260,12 @@ async function runOneAutoApply(next) {
     if (isSF) {
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content/autofill.js"] }).catch(() => {});
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content/successfactors.js"] }).catch(() => {});
+    } else if (isPortal) {
+      // External ATS portal → run the generic engine in the user's own browser.
+      const apiBase = await getApiBase();
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: (b) => { window.__JAA_API_BASE = b; }, args: [apiBase] }).catch(() => {});
+      await chrome.scripting.executeScript({ target: { tabId: tab.id },
+        files: ["content/autofill.js", "content/greenhouse.js", "content/lever.js", "content/ashby.js", "content/generic.js", "content/generic_apply.js"] }).catch(() => {});
     } else {
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content/linkedin.js"] }).catch(() => {});
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content/linkedin_easyapply.js"] }).catch(() => {});
@@ -269,13 +277,17 @@ async function runOneAutoApply(next) {
       if (attempt > 0) await new Promise(res => setTimeout(res, 4000));
       const [{ result } = {}] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: async (appId, sf, autoSub) => {
+        func: async (appId, kind, autoSub) => {
           const job = window.__jaaExtractJob ? window.__jaaExtractJob() : null;
           let rr;
-          if (sf) {
+          if (kind === "sf") {
             rr = window.__jaaSFApply
               ? await window.__jaaSFApply({ autoSubmit: autoSub, applicationId: appId })
               : { error: "SF adapter not loaded" };
+          } else if (kind === "portal") {
+            rr = window.__jaaGenericApply
+              ? await window.__jaaGenericApply({ autoSubmit: true, applicationId: appId })
+              : { error: "generic engine not loaded" };
           } else {
             rr = window.__jaaRunEasyApply
               ? await window.__jaaRunEasyApply({ autoSubmit: true, applicationId: appId })
@@ -283,7 +295,7 @@ async function runOneAutoApply(next) {
           }
           return { ...rr, job };
         },
-        args: [next.id, isSF, portalAutoSubmit],
+        args: [next.id, isSF ? "sf" : isPortal ? "portal" : "li", portalAutoSubmit],
       });
       r = result || { error: "no result" };
       // captcha → stop retrying and pause automation

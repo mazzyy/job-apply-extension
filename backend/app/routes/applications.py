@@ -10,7 +10,7 @@ from ..services.events import emit
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
-JAA_BUILD = "2026-06-16-job-apis"  # bump on every change; surfaced in /auto-apply/status
+JAA_BUILD = "2026-06-16-extportal"  # bump on every change; surfaced in /auto-apply/status
 
 class LogRequest(BaseModel):
     """Used when the user triggers Autofill on a page without analyzing first.
@@ -360,6 +360,7 @@ def auto_apply_status(db: Session = Depends(get_db)):
                              ApplicationEvent.created_at >= today_start).count())
     queued = db.query(Application).filter(Application.status == "queued").count()
     searches = db.query(Application).filter(Application.status == "queued_search").count()
+    manual_q = db.query(Application).filter(Application.status == "queued_manual").count()
     cap = row.auto_apply_daily_cap or 15
     enabled = bool(row.auto_apply_enabled)
     _ext_on = bool(getattr(row, "auto_apply_external", 0))
@@ -396,6 +397,7 @@ def auto_apply_status(db: Session = Depends(get_db)):
         "applied_today": applied_today,
         "queued": queued,
         "searches": searches,
+        "queued_manual": manual_q,
         "queued_linkedin": li_queued,
         "queued_portal": sf_queued,
         "cap_reached": applied_today >= cap,
@@ -490,7 +492,19 @@ def auto_apply_expanded(app_id: int, body: ExpandIn, db: Session = Depends(get_d
 def auto_apply_clear_queue(db: Session = Depends(get_db)):
     """Remove everything not yet applied (queued jobs + pending searches)."""
     n = (db.query(Application)
-         .filter(Application.status.in_(("queued", "queued_search")))
+         .filter(Application.status.in_(("queued", "queued_search", "queued_manual")))
+         .delete(synchronize_session=False))
+    db.commit()
+    return {"ok": True, "removed": n}
+
+
+@router.post("/auto-apply/clear-log")
+def auto_apply_clear_log(db: Session = Depends(get_db)):
+    """Clear the application-log clutter: queued + search tasks + needs-review + failed.
+    Applied / interview / offer / rejected records are kept."""
+    n = (db.query(Application)
+         .filter(Application.status.in_(
+             ("queued", "queued_manual", "queued_search", "expanded", "needs_review", "failed")))
          .delete(synchronize_session=False))
     db.commit()
     return {"ok": True, "removed": n}

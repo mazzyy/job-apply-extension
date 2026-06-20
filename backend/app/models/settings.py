@@ -56,6 +56,7 @@ class AppSettings(Base):
     discovery_keywords = Column(Text, nullable=True)
     discovery_location = Column(String(200), nullable=True)
     discovery_min_fit = Column(Integer, default=0)
+    discovery_max_age_days = Column(Integer, default=0)
     discovery_companies = Column(Text, nullable=True)   # JSON [{ats, slug}]
     discovery_last_run = Column(DateTime, nullable=True)
     discovery_sources = Column(Text, nullable=True)   # JSON per-source config (keys, limits, usage)

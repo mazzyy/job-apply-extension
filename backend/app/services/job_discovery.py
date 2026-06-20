@@ -9,7 +9,7 @@ Sources (no scraping, no paid keys required for the default):
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 import httpx
 from sqlalchemy.orm import Session
@@ -36,6 +36,35 @@ def _platform_for(url: str) -> str:
 
 def _clean(text: str) -> str:
     return re.sub(r"<[^>]+>", " ", text or "").replace("&nbsp;", " ").replace("&amp;", "&").strip()
+
+
+def _parse_date(v):
+    """Best-effort parse of a posting date -> epoch seconds (UTC), or None."""
+    if v is None:
+        return None
+    try:
+        if isinstance(v, (int, float)) or (isinstance(v, str) and v.strip().isdigit()):
+            x = float(v)
+            if x > 1e12:           # milliseconds
+                x /= 1000.0
+            return x
+        m = re.search(r"(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}):(\d{2}))?", str(v))
+        if m:
+            y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            hh, mm, ss = int(m.group(4) or 0), int(m.group(5) or 0), int(m.group(6) or 0)
+            return datetime(y, mo, d, hh, mm, ss, tzinfo=timezone.utc).timestamp()
+    except Exception:
+        return None
+    return None
+
+
+def _age_days(ts):
+    if not ts:
+        return None
+    try:
+        return max(0, int((datetime.now(timezone.utc).timestamp() - ts) / 86400))
+    except Exception:
+        return None
 
 
 def _first(d, *keys):
@@ -84,6 +113,7 @@ def fetch_jooble(key, keywords, location):
                         "url": j.get("link"), "location": j.get("location"),
                         "remote": "remote" in ((j.get("location") or "") + " " + (j.get("type") or "")).lower(),
                         "description": _clean(j.get("snippet"))[:8000], "tags": [], "_searched": True,
+                        "posted_at": _parse_date(j.get("updated")),
                     })
     except Exception as e:
         log.warning("jooble fetch failed: %s", e)
@@ -115,6 +145,7 @@ def fetch_rapidapi(key, country, keywords, page=1):
                         "remote": False,
                         "description": _clean(_first(j, "description", "jobDescription", "text", "summary") or "")[:8000],
                         "tags": [], "_searched": True,
+                        "posted_at": _parse_date(_first(j, "datePosted", "pubDate", "date", "dateCreated", "created", "postedAt", "publishedAt")),
                     })
     except Exception as e:
         log.warning("rapidapi fetch failed: %s", e)
@@ -139,6 +170,7 @@ def fetch_arbeitnow(pages: int = 3) -> list:
                         "remote": bool(j.get("remote")),
                         "description": _clean(j.get("description"))[:8000],
                         "tags": j.get("tags") or [],
+                        "posted_at": _parse_date(j.get("created_at")),
                     })
     except Exception as e:
         log.warning("arbeitnow fetch failed: %s", e)
@@ -156,7 +188,7 @@ def fetch_greenhouse(slug: str) -> list:
                         "title": j.get("title"), "company": slug,
                         "url": j.get("absolute_url"),
                         "location": (j.get("location") or {}).get("name"),
-                        "remote": False, "description": _clean(j.get("content"))[:8000], "tags": [],
+                        "remote": False, "description": _clean(j.get("content"))[:8000], "tags": [], "posted_at": _parse_date(j.get("updated_at")),
                     })
     except Exception as e:
         log.warning("greenhouse %s: %s", slug, e)
@@ -177,6 +209,7 @@ def fetch_lever(slug: str) -> list:
                         "remote": False,
                         "description": _clean(j.get("descriptionPlain") or j.get("description"))[:8000],
                         "tags": [],
+                        "posted_at": _parse_date(j.get("createdAt")),
                     })
     except Exception as e:
         log.warning("lever %s: %s", slug, e)
@@ -196,11 +229,12 @@ def _loc_match(job: dict, location: str) -> bool:
     return bool(job.get("remote")) or location.strip().lower() in (job.get("location") or "").lower()
 
 
-def gather(db: Session, row: AppSettings) -> list:
+def gather(db: Session, row: AppSettings, stats: dict = None) -> list:
     """Fetch + filter + fit-score (no queueing). Returns ranked job dicts."""
     keywords = [k for k in re.split(r"[,\n]", row.discovery_keywords or "") if k.strip()]
     location = row.discovery_location or ""
     min_fit = row.discovery_min_fit or 0
+    max_age = getattr(row, "discovery_max_age_days", 0) or 0
     try:
         companies = json.loads(row.discovery_companies or "[]")
     except Exception:
@@ -239,12 +273,17 @@ def gather(db: Session, row: AppSettings) -> list:
           or db.query(CV).order_by(CV.created_at.desc()).first())
     cv_text = (cv.raw_text if cv else "") or ""
 
-    out, seen = [], set()
+    out, seen, old_hidden = [], set(), 0
     for j in jobs:
         url = (j.get("url") or "").split("?")[0].rstrip("/")
         if not url or url in seen:
             continue
         seen.add(url)
+        age = _age_days(j.get("posted_at"))
+        if max_age and age is not None and age > max_age:
+            old_hidden += 1
+            continue
+        j["age_days"] = age
         if not j.get("_searched") and (not _kw_match(j, keywords) or not _loc_match(j, location)):
             continue
         score = 0
@@ -259,7 +298,14 @@ def gather(db: Session, row: AppSettings) -> list:
         j["platform"] = _platform_for(j.get("url"))
         out.append(j)
     out.sort(key=lambda x: x.get("fit", 0), reverse=True)
-    return out[:60]
+    out = out[:60]
+    if stats is not None:
+        stats.update({
+            "old_hidden": old_hidden,
+            "no_date": sum(1 for j in out if j.get("age_days") is None),
+            "kept": len(out), "max_age": max_age,
+        })
+    return out
 
 
 def discover_and_queue(db: Session) -> dict:

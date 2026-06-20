@@ -9,7 +9,7 @@
   const invoke = window.__TAURI__.core.invoke;
   const listen = window.__TAURI__.event.listen;
   const BASE = location.origin;
-  const JAA_UI_BUILD = "2026-06-16-job-apis"; // shown in the log to confirm what's actually running
+  const JAA_UI_BUILD = "2026-06-16-extportal"; // shown in the log to confirm what's actually running
 
   const SPEEDS = {
     slow:   { min: 90000, rand: 90000, label: "~90–180s between submits (safest)" },
@@ -86,6 +86,7 @@
       '    <button class="btn" id="aa-ib-start">Start</button>' +
       '    <button class="btn secondary" id="aa-ib-signin">Sign in to LinkedIn</button>' +
       '    <button class="btn secondary" id="aa-ib-toggleview">Show browser</button>' +
+      '    <button class="btn" id="aa-ib-applynow">Apply queued now</button>' +
       '  </div>' +
       '  <span class="muted" id="aa-ib-status"></span>' +
       '</div>' +
@@ -133,6 +134,7 @@
       await navigate("https://www.linkedin.com/login").catch((e) => logLine(String(e), "err"));
     };
     document.getElementById("aa-ib-toggleview").onclick = () => (browserVisible ? hideBrowser() : showBrowser());
+    document.getElementById("aa-ib-applynow").onclick = applyQueuedNow;
     document.getElementById("aa-ib-start").onclick = toggleEnabled;
 
     const sp = document.getElementById("aa-ib-speed");
@@ -216,10 +218,12 @@
   // Explain, in plain words, why nothing is applying right now.
   function idleReason() {
     const mode = status.browser_mode || "system";
-    if (mode !== "integrated") return "System mode — the extension applies (not the in-app browser)";
-    if (!status.enabled) return "Auto-apply is OFF — press Start";
-    if (status.cap_reached) return "Daily cap reached (" + (status.daily_cap || "?") + ")";
-    if (!status.next) return "No jobs queued — add jobs above, then Start";
+    const qm = status.queued_manual || 0;
+    if (mode !== "integrated") return qm ? (qm + " portal job(s) queued — switch to Integrated browser (top-left), or click “Apply queued now”") : "System mode — the extension applies (not the in-app browser)";
+    if (!status.enabled) return qm ? (qm + " portal job(s) queued — press Start or “Apply queued now”") : "Auto-apply is OFF — press Start";
+    if (status.cap_reached) return "Daily cap reached (" + (status.daily_cap || "?") + ") — raise the cap to continue";
+    if (qm && !status.auto_apply_external) return qm + " portal job(s) queued — tick “Auto-submit external portals” (or click “Apply queued now”)";
+    if (!status.next) return qm ? (qm + " portal job(s) queued — click “Apply queued now”") : "No jobs queued — add jobs above, then Start";
     if (busy) return "Working…";
     const sp = SPEEDS[getSpeed()] || SPEEDS.normal;
     const minGap = (status.next.task === "harvest" || status.next.task === "session") ? 8000 : ((status.next.platform || "") === "linkedin" ? sp.min : 5000);
@@ -317,13 +321,20 @@
           '<div class="aa-ib-minfo"><b>' + t + '</b><span>' + sub + '</span></div>' +
           '<div class="aa-ib-mbtns"><button class="btn open">Open &amp; assist</button>' +
           '<button class="btn secondary applied">Applied</button>' +
-          '<button class="btn secondary skip">Skip</button></div></div>';
+          '<button class="btn secondary skip">Skip</button>' +
+          '<button class="btn secondary remove">Remove</button></div></div>';
       }).join("");
     rows.forEach((r) => {
       const row = card.querySelector('.aa-ib-mrow[data-id="' + r.id + '"]'); if (!row) return;
       row.querySelector(".open").onclick = () => openManual(r);
       row.querySelector(".applied").onclick = () => manualResult(r, "applied");
       row.querySelector(".skip").onclick = () => manualResult(r, "skipped");
+      row.querySelector(".remove").onclick = async () => {
+        if (!confirm("Remove this job from the queue?")) return;
+        try { await api("/applications/" + r.id, { method: "DELETE" }); logLine("Removed: " + (r.job_title || r.url), "warn"); }
+        catch (e) { logLine(e.message, "err"); }
+        loadManual();
+      };
     });
   }
 
@@ -399,9 +410,9 @@
       r = await runEval("(async()=>{ const j=window.__jaaExtractJob?window.__jaaExtractJob():null; const rr=window.__jaaGenericApply?await window.__jaaGenericApply({autoSubmit:true, applicationId:" + next.id + "}):{error:'engine not loaded'}; return Object.assign({}, rr, {job:j}); })()", 180000);
     }
     if (isCaptcha(r)) {
-      logLine("Security check detected — pausing auto-apply.", "err");
-      await api("/applications/auto-apply/toggle", { method: "POST", body: JSON.stringify({ enabled: false }) }).catch(() => {});
-      await report(next, r, "failed", "Security check — paused"); return;
+      logLine("⚠ Human check on this job — solve it in the browser pane. Marked needs-review; moving on.", "warn");
+      await report(next, r, "needs_review", "Human check — finish in the integrated browser");
+      return;   // don't disable everything; just skip this one
     }
     await finishExternal(next, r);
   }
@@ -496,6 +507,30 @@
   }
 
   /* ---------- main tick ---------- */
+  // One-click: make portal auto-apply possible and immediately apply the first queued portal job.
+  async function applyQueuedNow() {
+    if (busy) { logLine("Already working — one moment.", "warn"); return; }
+    const mode = status.browser_mode || "system";
+    try {
+      await api("/settings/", { method: "PUT", body: JSON.stringify({ auto_apply_external: true }) });
+      await api("/applications/auto-apply/toggle", { method: "POST", body: JSON.stringify({ enabled: true, daily_cap: status.daily_cap || 15, mode: status.mode || "session", portal_auto_submit: !!status.portal_auto_submit }) });
+    } catch (e) {}
+    await refresh();
+    if (mode !== "integrated") {
+      logLine("External (System) mode is selected — auto-apply is ON and your Chrome extension will apply the queued jobs in your own browser. Keep Chrome open with the extension installed & reloaded. (Switch to Integrated if you'd rather apply inside this app.)", "warn");
+      return;   // respect the user's choice — the extension drives System mode
+    }
+    let rows = [];
+    try { rows = await api("/applications/manual-queue"); } catch (e) {}
+    if (!rows || !rows.length) { logLine("No portal jobs queued. Use Find jobs → Queue matches, or paste a URL above.", "warn"); return; }
+    const r0 = rows[0];
+    const next = { id: r0.id, url: r0.url, task: "apply", platform: r0.platform };
+    busy = true;
+    try { logLine("Applying now: " + (r0.job_title || r0.url)); await runApply(next); logLine("Done — the loop will continue with the rest.", "ok"); }
+    catch (e) { logLine("Run failed: " + (e && e.message ? e.message : e), "err"); }
+    finally { busy = false; lastRunAt = Date.now(); loadManual(); refresh(); }
+  }
+
   async function tick() {
     await refresh();
     if (busy) return;

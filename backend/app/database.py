@@ -61,6 +61,7 @@ def ensure_schema():
         ("app_settings", "discovery_keywords", "TEXT"),
         ("app_settings", "discovery_location", "VARCHAR(200)"),
         ("app_settings", "discovery_min_fit", "INTEGER DEFAULT 0"),
+        ("app_settings", "discovery_max_age_days", "INTEGER DEFAULT 0"),
         ("app_settings", "discovery_companies", "TEXT"),
         ("app_settings", "discovery_last_run", "DATETIME"),
         ("app_settings", "discovery_sources", "TEXT"),
