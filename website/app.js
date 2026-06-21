@@ -1685,7 +1685,12 @@ async function refreshAutoApply(){
     <div class="aa-stat"><b>${st.searches || 0}</b><div class="aa-stat-label">searches to expand</div></div>
     <div class="aa-stat"><b>${st.applied_today}</b><div class="aa-stat-label">applied today${st.cap_reached ? " · <span style='color:#b91c1c'>cap reached</span>" : ""}</div></div>`;
   const w = $("#aa-worker");
-  if (st.worker_online) {
+  const wmode = st.browser_mode || "system";
+  if (wmode === "integrated") {
+    // In Integrated mode the in-app browser does the applying; the extension is optional and is expected to sleep.
+    w.className = "aa-worker on";
+    w.innerHTML = `<span class="dot"></span> Integrated browser is the driver — the Chrome extension isn't used in this mode.`;
+  } else if (st.worker_online) {
     w.className = "aa-worker on";
     w.innerHTML = `<span class="dot"></span> Extension connected${
       st.worker_action && st.worker_action !== "idle"
@@ -1697,7 +1702,7 @@ async function refreshAutoApply(){
   } else {
     // Seen before but went quiet (worker asleep) — soft warning, not an error.
     w.className = "aa-worker idle";
-    w.innerHTML = `<span class="dot"></span> Extension idle (last active ${st.worker_age_sec}s ago) — it wakes on the next check.`;
+    w.innerHTML = `<span class="dot"></span> Extension asleep (last ping ${st.worker_age_sec}s ago). Chrome suspends idle extensions to save memory; it wakes on the ~1-min check. Keep Chrome open — if it stays asleep, reload it at <b>chrome://extensions</b>.`;
   }
   loadAutoApplyLog();
 }
@@ -1733,6 +1738,8 @@ async function loadAutoApplyLog(){
       </div>
       <div class="aa-detail">
         ${r.url ? `<div style="margin-bottom:6px;"><a href="#" data-ext="${esc(r.url)}">Open job in browser →</a></div>` : ""}
+        ${(r.steps && r.steps.length) ? `<div class="aa-steps"><b>What it did</b><ol>${r.steps.map(s=>`<li>${esc(s)}</li>`).join("")}</ol></div>` : ""}
+        ${r.reason ? `<div class="aa-failreason">⚠ ${esc(r.reason)}</div>` : ""}
         ${r.is_search ? '<span class="muted">This search auto-queues every Easy-Apply job it finds.</span>'
           : (r.answers || []).length ? `<table>${r.answers.map(a =>
               `<tr><td>${esc(a.label)}</td><td>${esc(String(a.value))}</td></tr>`).join("")}</table>`

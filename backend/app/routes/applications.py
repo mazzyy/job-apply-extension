@@ -10,7 +10,7 @@ from ..services.events import emit
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
-JAA_BUILD = "2026-06-16-extportal"  # bump on every change; surfaced in /auto-apply/status
+JAA_BUILD = "2026-06-16-humancheck"  # bump on every change; surfaced in /auto-apply/status
 
 class LogRequest(BaseModel):
     """Used when the user triggers Autofill on a page without analyzing first.
@@ -171,6 +171,20 @@ def delete_app(app_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True}
 
+
+@router.post("/{app_id}/resolve-url")
+def resolve_app_url(app_id: int, db: Session = Depends(get_db)):
+    """Resolve an aggregator link (Jooble/Indeed/...) to the real employer apply URL."""
+    a = db.query(Application).filter(Application.id == app_id).first()
+    if not a:
+        raise HTTPException(404, "Not found")
+    from ..services.job_discovery import resolve_job_url
+    new, changed = resolve_job_url(a.url)
+    if changed and new:
+        a.url = new
+        db.commit()
+    return {"url": a.url, "changed": bool(changed)}
+
 def _to_dict(a: Application, include_full: bool = False) -> dict:
     d = {
         "id": a.id, "cv_id": a.cv_id,
@@ -255,6 +269,7 @@ class AutoResultIn(_BM):
     cv_used: str | None = None
     job_title: str | None = None
     company: str | None = None
+    steps: list | None = None
 
 
 # LinkedIn "date posted" filter values (f_TPR)
@@ -456,7 +471,7 @@ def auto_apply_result(app_id: int, body: AutoResultIn, db: Session = Depends(get
     a.status = {"applied": "applied", "needs_review": "needs_review", "failed": "failed"}.get(body.status, "failed")
     detail = _json.dumps({
         "answers": body.answers or [], "cv_used": body.cv_used,
-        "filled": body.filled, "reason": body.reason,
+        "filled": body.filled, "reason": body.reason, "steps": body.steps or [],
     }, ensure_ascii=False)
     ev = ApplicationEvent(
         application_id=a.id,
@@ -641,5 +656,6 @@ def auto_apply_log(limit: int = 80, platform: str = "", db: Session = Depends(ge
             "cv_used": detail.get("cv_used"),
             "answers": detail.get("answers", []),
             "reason": detail.get("reason"),
+            "steps": detail.get("steps", []),
         })
     return out

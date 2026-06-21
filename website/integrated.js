@@ -9,7 +9,7 @@
   const invoke = window.__TAURI__.core.invoke;
   const listen = window.__TAURI__.event.listen;
   const BASE = location.origin;
-  const JAA_UI_BUILD = "2026-06-16-extportal"; // shown in the log to confirm what's actually running
+  const JAA_UI_BUILD = "2026-06-16-humancheck"; // shown in the log to confirm what's actually running
 
   const SPEEDS = {
     slow:   { min: 90000, rand: 90000, label: "~90–180s between submits (safest)" },
@@ -102,6 +102,7 @@
       '  <label style="margin-left:14px"><input type="checkbox" id="aa-ib-ext"> Auto-submit external portals (Greenhouse/Lever/Ashby/Personio…)</label>' +
       '  <label style="margin-left:14px">Apply to <select id="aa-ib-types"><option value="easy">Easy Apply</option><option value="direct">Direct (external)</option><option value="both">Both</option></select></label>' +
       '</div>' +
+      '<div class="aa-ib-row aa-ib-adv"><label style="flex:1;min-width:240px">Test a job URL <span style="font-weight:400;color:#6b7280">(dry run — fills, never submits)</span><input id="aa-ib-testurl" placeholder="paste a job link to debug" style="width:100%"></label><button class="btn secondary" id="aa-ib-test">Test</button></div>' +
       '<div class="aa-ib-row aa-ib-tips">Tips: Sign in first · keep speed Normal · auto-submit covers Greenhouse/Lever/Ashby/Personio (+ SmartRecruiters/Workable/Recruitee) · other portals → Manual queue (Open &amp; assist) · review “needs review” before trusting results.</div>' +
       '<div class="aa-ib-row" id="aa-ib-manualbar" style="display:none">' +
       '  <span id="aa-ib-manualtitle" class="muted"></span>' +
@@ -135,6 +136,7 @@
     };
     document.getElementById("aa-ib-toggleview").onclick = () => (browserVisible ? hideBrowser() : showBrowser());
     document.getElementById("aa-ib-applynow").onclick = applyQueuedNow;
+    document.getElementById("aa-ib-test").onclick = testUrl;
     document.getElementById("aa-ib-start").onclick = toggleEnabled;
 
     const sp = document.getElementById("aa-ib-speed");
@@ -226,7 +228,7 @@
     if (!status.next) return qm ? (qm + " portal job(s) queued — click “Apply queued now”") : "No jobs queued — add jobs above, then Start";
     if (busy) return "Working…";
     const sp = SPEEDS[getSpeed()] || SPEEDS.normal;
-    const minGap = (status.next.task === "harvest" || status.next.task === "session") ? 8000 : ((status.next.platform || "") === "linkedin" ? sp.min : 5000);
+    const minGap = (status.next.task === "harvest" || status.next.task === "session") ? 8000 : (/linkedin\.com/i.test(status.next.url || "") ? sp.min : 5000);
     const wait = lastRunAt ? Math.max(0, minGap - (Date.now() - lastRunAt)) : 0;
     if (wait > 1500) return "Next " + status.next.task + " in ~" + Math.ceil(wait / 1000) + "s";
     return "Ready · next: " + status.next.task;
@@ -393,35 +395,78 @@
     logLine("→ " + reason, "warn");
   }
 
+  function playBeep() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+      const a = new AC(); const o = a.createOscillator(); const g = a.createGain();
+      o.connect(g); g.connect(a.destination); o.type = "sine"; o.frequency.value = 880; g.gain.value = 0.12;
+      o.start(); o.frequency.setValueAtTime(660, a.currentTime + 0.18);
+      setTimeout(() => { try { o.stop(); a.close(); } catch (e) {} }, 420);
+    } catch (e) {}
+  }
+  function notifyHumanCheck(next) {
+    playBeep();
+    try {
+      if (window.Notification && Notification.permission === "granted") new Notification("Human check needed", { body: (next && next.url) ? String(next.url).slice(0, 90) : "Solve it in the browser pane" });
+    } catch (e) {}
+  }
+  async function waitForCaptchaCleared(ms) {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      await sleep(2000);
+      const still = await runEval("(async()=>{ return (typeof window.__jaaIsCaptcha===\'function\') ? window.__jaaIsCaptcha() : false; })()", 8000).catch(() => true);
+      if (!still) return true;
+    }
+    return false;
+  }
   async function runApply(next) {
-    const ad = window.JAA_pickAdapter(next.url, next.platform);
-    if (ad.id === "linkedin") return runLinkedInJob(next);
-    logLine("Applying · " + (ad.id || "external") + " · " + (next.url || ""));
+    if (/linkedin\.com/i.test(next.url || "")) return runLinkedInJob(next);   // LinkedIn only by URL
+    // Resolve aggregator links (Jooble/Indeed/…) to the real employer URL first.
+    let url = next.url;
+    try { const rr = await api("/applications/" + next.id + "/resolve-url", { method: "POST" }); if (rr && rr.url) { url = rr.url; if (rr.changed) logLine("Resolved real URL → " + url); } } catch (e) {}
     await showBrowser();
-    await navigate(next.url); await sleep(6000);
-    let r;
-    if (ad.id === "successfactors") {
-      await invoke("browser_inject", { files: ["autofill.js", "successfactors.js"] });
-      const autoSub = !!status.portal_auto_submit;
-      r = await runEval("(async()=>{ const j=window.__jaaExtractJob?window.__jaaExtractJob():null; const rr=window.__jaaSFApply?await window.__jaaSFApply({autoSubmit:" + autoSub + ", applicationId:" + next.id + "}):{error:'engine not loaded'}; return Object.assign({}, rr, {job:j}); })()", 180000);
-    } else {
-      // Any external portal → generic engine: auto-submits supported ATS (Greenhouse/Lever/Ashby/Personio/…), else fills & leaves needs-review.
-      await invoke("browser_inject", { files: ["autofill.js", "greenhouse.js", "lever.js", "ashby.js", "generic.js", "generic_apply.js"] });
-      r = await runEval("(async()=>{ const j=window.__jaaExtractJob?window.__jaaExtractJob():null; const rr=window.__jaaGenericApply?await window.__jaaGenericApply({autoSubmit:true, applicationId:" + next.id + "}):{error:'engine not loaded'}; return Object.assign({}, rr, {job:j}); })()", 180000);
+    let r = null, hops = 0; const seen = new Set();
+    while (hops < 4) {
+      seen.add(url.split("#")[0]);
+      const ad = window.JAA_pickAdapter(url);
+      logLine("Applying · " + (ad.id || "external") + " · " + url);
+      await navigate(url); await sleep(6000);
+      if (ad.id === "successfactors") {
+        await invoke("browser_inject", { files: ["autofill.js", "successfactors.js"] });
+        const autoSub = !!status.portal_auto_submit;
+        r = await runEval("(async()=>{ const j=window.__jaaExtractJob?window.__jaaExtractJob():null; const rr=window.__jaaSFApply?await window.__jaaSFApply({autoSubmit:" + autoSub + ", applicationId:" + next.id + "}):{error:'engine not loaded'}; return Object.assign({}, rr, {job:j}); })()", 180000);
+      } else {
+        await invoke("browser_inject", { files: ["autofill.js", "greenhouse.js", "lever.js", "ashby.js", "generic.js", "generic_apply.js"] });
+        r = await runEval("(async()=>{ const j=window.__jaaExtractJob?window.__jaaExtractJob():null; const rr=window.__jaaGenericApply?await window.__jaaGenericApply({autoSubmit:true, applicationId:" + next.id + "}):{error:'engine not loaded'}; return Object.assign({}, rr, {job:j}); })()", 180000);
+      }
+      if (r && r.stopped === "follow" && r.url && !seen.has(r.url.split("#")[0])) { logLine("↪ Apply opens another page — following…", "warn"); url = r.url; hops++; continue; }
+      break;
     }
     if (isCaptcha(r)) {
-      logLine("⚠ Human check on this job — solve it in the browser pane. Marked needs-review; moving on.", "warn");
-      await report(next, r, "needs_review", "Human check — finish in the integrated browser");
-      return;   // don't disable everything; just skip this one
+      notifyHumanCheck(next);
+      logLine("🔔 Human check — solve it in the browser pane within 10s, or I’ll skip to the next job.", "warn");
+      const cleared = await waitForCaptchaCleared(10000);
+      if (cleared) {
+        logLine("✓ Human check cleared — finishing this application.", "ok");
+        await invoke("browser_inject", { files: ["autofill.js", "greenhouse.js", "lever.js", "ashby.js", "generic.js", "generic_apply.js"] });
+        r = await runEval("(async()=>{ const j=window.__jaaExtractJob?window.__jaaExtractJob():null; const rr=window.__jaaGenericApply?await window.__jaaGenericApply({autoSubmit:true, applicationId:" + next.id + "}):{error:'engine not loaded'}; return Object.assign({}, rr, {job:j}); })()", 180000);
+        if (isCaptcha(r)) { await report(next, r, "needs_review", "Human check still present — finish manually"); return; }
+      } else {
+        logLine("⏭ No response in 10s — skipping to the next job.", "warn");
+        await report(next, r, "needs_review", "Human check — skipped after 10s; finish manually");
+        return;
+      }
     }
     await finishExternal(next, r);
   }
   async function reportApply(next, r) {
-    const meta = { job_title: r.job ? r.job.job_title : null, company: r.job ? r.job.company : null, filled: r.filled || 0, cv_used: r.cv_used || null, answers: (r.answered || []).map((a) => ({ label: a.label, value: a.value })) };
+    r = r || { error: "no response (the page may have navigated away or the run timed out)" };
+    const meta = { job_title: r.job ? r.job.job_title : null, company: r.job ? r.job.company : null, filled: r.filled || 0, cv_used: r.cv_used || null, steps: r.steps || [], answers: (r.answered || []).map((a) => ({ label: a.label, value: a.value })) };
     let stat = "failed", reason = r.error || r.stopped || "unknown";
     if (r.stopped === "submitted") { stat = "applied"; reason = null; }
     else if (r.stopped === "submit_unconfirmed") { stat = "applied"; reason = "submitted (confirmation not detected — verify)"; }
     else if (["needs_review", "required_field_blank", "validation_error", "ready_to_submit", "needs_account", "needs_input"].indexOf(r.stopped) >= 0) { stat = "needs_review"; reason = r.reason || r.stopped; }
+    else if (r.stopped === "expired") { stat = "failed"; reason = "Job expired / no longer available"; }
     await api("/applications/" + next.id + "/auto-result", { method: "POST", body: JSON.stringify(Object.assign({}, meta, { status: stat, reason })) });
     logLine("→ " + stat + (reason ? " (" + reason + ")" : "") + " · " + meta.filled + " fields", stat === "applied" ? "ok" : stat === "needs_review" ? "warn" : "err");
   }
@@ -531,6 +576,27 @@
     finally { busy = false; lastRunAt = Date.now(); loadManual(); refresh(); }
   }
 
+  // Dry-run a single URL in the integrated browser and print a full diagnostic trace.
+  async function testUrl() {
+    const el = document.getElementById("aa-ib-testurl"); const u = ((el && el.value) || "").trim();
+    if (!u) { logLine("Paste a job URL to test.", "warn"); return; }
+    if (busy) { logLine("Busy — wait for the current run to finish.", "warn"); return; }
+    busy = true;
+    try {
+      logLine("── TEST (dry run, will NOT submit) → " + u);
+      await api("/settings/", { method: "PUT", body: JSON.stringify({ browser_mode: "integrated" }) }).catch(() => {});
+      await refresh(); await showBrowser();
+      await navigate(u); await sleep(6000);
+      await invoke("browser_inject", { files: ["autofill.js", "greenhouse.js", "lever.js", "ashby.js", "generic.js", "generic_apply.js"] });
+      const r = await runEval("(async()=>{ const j=window.__jaaExtractJob?window.__jaaExtractJob():null; const rr=window.__jaaGenericApply?await window.__jaaGenericApply({autoSubmit:false, applicationId:null}):{error:\'engine not loaded\'}; return Object.assign({}, rr, {job:j}); })()", 180000);
+      if (!r) { logLine("TEST: no result (page navigated away or timed out).", "err"); return; }
+      logLine("TEST RESULT → " + (r.stopped || r.error || "?") + " · portal=" + (r.ats || "?") + " · filled=" + (r.filled || 0) + (r.cv_attached ? " · CV ok" : ""), r.stopped === "ready_to_submit" ? "ok" : "warn");
+      (r.steps || []).forEach((s, i) => logLine("   " + (i + 1) + ". " + s));
+      if (r.missing && r.missing.length) logLine("   ⚠ unanswered required: " + r.missing.map((m) => m.label).join(" | "), "warn");
+    } catch (e) { logLine("TEST failed: " + (e && e.message ? e.message : e), "err"); }
+    finally { busy = false; }
+  }
+
   async function tick() {
     await refresh();
     if (busy) return;
@@ -539,7 +605,7 @@
     const next = status.next;
     if (next.task === "apply" && status.cap_reached) return;
     const sp = SPEEDS[getSpeed()] || SPEEDS.normal;
-    const isLI = (next.platform || "") === "linkedin";
+    const isLI = /linkedin\.com/i.test(next.url || "");
     const minGap = (next.task === "harvest" || next.task === "session") ? 8000
       : isLI ? sp.min + Math.floor(Math.random() * sp.rand)   // human pacing only for LinkedIn
       : 5000;                                                  // portals: no anti-detection throttle
@@ -564,6 +630,7 @@
   async function boot() {
     for (let i = 0; i < 40 && !injectUI(); i++) await sleep(150);
     logLine("UI build " + JAA_UI_BUILD);
+    try { if (window.Notification && Notification.permission === "default") Notification.requestPermission(); } catch (e) {}
     await listen("browser-loaded", (e) => {
       browserLoaded = true;
       if (navResolve) { const f = navResolve; navResolve = null; f(e.payload); }

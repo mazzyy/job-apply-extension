@@ -1,4 +1,6 @@
 // Background service worker.
+const JAA_EXT_BUILD = "2026-06-16-humancheck";
+console.log("[JAA] extension service worker build", JAA_EXT_BUILD);
 const DEFAULT_API_BASE = "http://localhost:8000";
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -242,7 +244,9 @@ function waitForTabComplete(tabId, timeoutMs = 25000) {
 }
 
 async function runOneAutoApply(next) {
-  const tab = await chrome.tabs.create({ url: next.url, active: true });
+  let startUrl = next.url;
+  try { const rr = await apiFetch(`/applications/${next.id}/resolve-url`, { method: "POST" }); if (rr && rr.url) startUrl = rr.url; } catch (e) {}
+  const tab = await chrome.tabs.create({ url: startUrl, active: true });
   const report = (body) =>
     apiFetch(`/applications/${next.id}/auto-result`, { method: "POST", body: JSON.stringify(body) })
       .catch(() => {});
@@ -250,8 +254,9 @@ async function runOneAutoApply(next) {
     // Wait for the page to actually finish loading, then let LinkedIn's SPA hydrate
     await waitForTabComplete(tab.id);
     await new Promise(r => setTimeout(r, 6000));
-    const isSF = next.platform === "successfactors";
-    const isLinkedIn = next.platform === "linkedin" || !next.platform;
+    const _pageUrl = (startUrl || next.url || "");
+    const isLinkedIn = /linkedin\.com/i.test(_pageUrl);
+    const isSF = /successfactors|sapsf/i.test(_pageUrl) || next.platform === "successfactors";
     const isPortal = !isSF && !isLinkedIn;   // greenhouse/lever/ashby/personio/workable/… → generic engine
     // Whether portals auto-submit is user-controlled in settings
     let portalAutoSubmit = false;
@@ -298,10 +303,15 @@ async function runOneAutoApply(next) {
         args: [next.id, isSF ? "sf" : isPortal ? "portal" : "li", portalAutoSubmit],
       });
       r = result || { error: "no result" };
-      // captcha → stop retrying and pause automation
-      if (r.error === "captcha" || /captcha|security check|checkpoint/i.test(r.message || r.error || "")) {
-        r.error = r.message || "LinkedIn security check — automation paused.";
-        try { await apiFetch("/applications/auto-apply/toggle", { method: "POST", body: JSON.stringify({ enabled: false }) }); } catch {}
+      // captcha → stop retrying. Pause everything ONLY for LinkedIn (protect the account);
+      // for portals just mark needs-review and move on.
+      if (r.error === "captcha" || r.stopped === "captcha" || /captcha|security check|checkpoint/i.test(r.message || r.error || "")) {
+        if (isLinkedIn) {
+          r.error = r.message || "LinkedIn security check — automation paused.";
+          try { await apiFetch("/applications/auto-apply/toggle", { method: "POST", body: JSON.stringify({ enabled: false }) }); } catch {}
+        } else {
+          r.stopped = "needs_review"; r.reason = r.reason || "Human check on the page — open & finish manually"; r.error = undefined;
+        }
         break;
       }
       if (!/modal didn'?t open/i.test(r.error || "")) break;
@@ -313,9 +323,29 @@ async function runOneAutoApply(next) {
       });
       if (blocked) { r = { error: "LinkedIn security check (captcha) — auto-apply paused. Open LinkedIn and verify manually." }; break; }
     }
+    // Follow "Apply opens a new page" links (portals), re-injecting the engine on each hop.
+    let _hops = 0;
+    while (r && r.stopped === "follow" && r.url && _hops < 3) {
+      _hops++;
+      try {
+        await chrome.tabs.update(tab.id, { url: r.url });
+        await waitForTabComplete(tab.id);
+        await new Promise(res => setTimeout(res, 6000));
+        const apiBase2 = await getApiBase();
+        await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: (b) => { window.__JAA_API_BASE = b; }, args: [apiBase2] }).catch(() => {});
+        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content/autofill.js", "content/greenhouse.js", "content/lever.js", "content/ashby.js", "content/generic.js", "content/generic_apply.js"] }).catch(() => {});
+        const [{ result: rr2 } = {}] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: async (appId) => { const job = window.__jaaExtractJob ? window.__jaaExtractJob() : null; const x = window.__jaaGenericApply ? await window.__jaaGenericApply({ autoSubmit: true, applicationId: appId }) : { error: "generic engine not loaded" }; return { ...x, job }; },
+          args: [next.id],
+        });
+        r = rr2 || { error: "no result after follow" };
+      } catch (e) { r = { error: "follow failed: " + e.message }; break; }
+    }
     const meta = {
       job_title: r.job?.job_title || null, company: r.job?.company || null,
       filled: r.filled || 0, cv_used: r.cv_used || null,
+      steps: r.steps || [],
       answers: (r.answered || []).map(a => ({ label: a.label, value: a.value })),
     };
     if (r.stopped === "submitted") {

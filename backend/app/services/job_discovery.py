@@ -19,6 +19,38 @@ from .cv_match import score_cv_against_jd
 
 log = logging.getLogger("jaa.discovery")
 UA = "Mozilla/5.0 (compatible; JobApplyAssistant/1.0)"
+UA_BROWSER = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+_AGG_HOSTS = ("jooble.org", "indeed.com", "glassdoor.", "stepstone.", "talent.com", "neuvoo", "adzuna.", "ziprecruiter.", "google.com/search")
+
+
+def _is_aggregator(url: str) -> bool:
+    low = (url or "").lower()
+    return any(h in low for h in _AGG_HOSTS)
+
+
+def resolve_job_url(url: str):
+    """Follow aggregator links (esp. Jooble) to the real employer apply URL.
+    Returns (resolved_url, changed). No-op for non-aggregator URLs."""
+    if not url or not _is_aggregator(url):
+        return url, False
+    low = url.lower()
+    try:
+        with httpx.Client(timeout=12, follow_redirects=True, headers={"User-Agent": UA_BROWSER}) as c:
+            target = url
+            # Jooble: /desc/<id> is a description page; /away/<id> 302-redirects to the employer.
+            if "jooble.org/desc/" in low:
+                target = re.sub(r"/desc/", "/away/", url, count=1)
+            r = c.get(target)
+            final = str(r.url)
+            if final and not _is_aggregator(final):
+                return final, (final != url)
+            # Fallback: scrape an outbound apply link from the page HTML.
+            m = re.search(r'href="(https?://[^"]+)"[^>]*(?:class="[^"]*appl|data-[^=]*appl|>\s*appl)', r.text or "", re.I)
+            if m and not _is_aggregator(m.group(1)):
+                return m.group(1), True
+    except Exception as e:
+        log.warning("resolve_job_url(%s) failed: %s", url, e)
+    return url, False
 
 
 def _platform_for(url: str) -> str:
